@@ -92,8 +92,10 @@ namespace WzComparerR2.Avatar
             {
                 Point translation = Add(layer.Position, layer.Source.Origin);
                 var map = layer.Source.MapAnchors.Select(anchor => new AvatarMapPoint(anchor.Name, Add(anchor.Position, translation)));
-                outputLayers.Add(new AvatarLayoutLayer(layer.Source, layer.Position, AvatarZMap.ResolveZ(layer.Source, this.zMap),
-                    outputLayers.Count, map, layer.Group.Id, transformIds[layer.Group.Domain]));
+                var outputLayer = new AvatarLayoutLayer(layer.Source, layer.Position, AvatarZMap.ResolveZ(layer.Source, this.zMap),
+                    outputLayers.Count, map, layer.Group.Id, transformIds[layer.Group.Domain]);
+                outputLayer.FrameDisplayVisible = layer.Group.Domain != AvatarLayerGroup.Character || frameInfo?.FrameRemoveBody != true;
+                outputLayers.Add(outputLayer);
             }
 
             var layout = new AvatarLayout(outputLayers, outputGroups, frameInfo, messages, transformGroups);
@@ -119,10 +121,10 @@ namespace WzComparerR2.Avatar
             string unresolvedReason = null;
             if ((character?.RotateProp ?? 0) != 0 || (hasTaming && (taming?.RotateProp ?? 0) != 0))
                 unresolvedReason = "Nonzero rotateProp semantics are not resolved.";
-            else if (hasTaming && (rotation != 0 || characterFlip || tamingFlip))
-                unresolvedReason = "Mounted rotation and reflection require resolved attachment and mirror-axis semantics.";
+            else if (hasTaming && characterFlip != tamingFlip)
+                unresolvedReason = "Different character and mount reflection axes require resolved attachment semantics.";
             else if (hasTaming && taming != null
-                && (taming.Flip || AvatarRenderTransform.GetRightAngleRotation(taming.Rotate) != 0 || taming.Move != Point.Empty))
+                && (taming.Flip || taming.Rotate != 0 || taming.Move != Point.Empty))
             {
                 unresolvedReason = "Mount-frame transforms are not resolved by the shared character-motion model.";
             }

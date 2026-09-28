@@ -63,7 +63,7 @@ namespace WzComparerR2.Avatar
 
                 layer.SlotPriority = priority;
                 layer.SlotMask = mask.AsReadOnly();
-                layer.Visible = true;
+                layer.OcclusionVisible = true;
             }
 
             // Character and mount layers maintain independent ownership tables.
@@ -93,7 +93,7 @@ namespace WzComparerR2.Avatar
 
                         if (previous == null)
                         {
-                            layer.Visible = false;
+                            layer.OcclusionVisible = false;
                             break;
                         }
 
@@ -103,11 +103,11 @@ namespace WzComparerR2.Avatar
                             continue;
                         if (difference > 0)
                         {
-                            layer.Visible = false;
+                            layer.OcclusionVisible = false;
                             break;
                         }
 
-                        previous.Visible = false;
+                        previous.OcclusionVisible = false;
                         owners[token] = layer;
                     }
                 }

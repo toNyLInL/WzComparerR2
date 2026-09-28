@@ -218,7 +218,7 @@ namespace WzComparerR2.Avatar
             foreach (Wz_Node child in frameNode.Nodes)
             {
                 Wz_Node canvas = child.ResolveOptionalUol();
-                if (child.Text == "hairShade" && !(canvas?.Value is Wz_Png))
+                if (child.Text == "hairShade")
                     canvas = canvas?.Nodes["0"].ResolveOptionalUol();
                 if (!(canvas?.Value is Wz_Png))
                     continue;
@@ -621,7 +621,8 @@ namespace WzComparerR2.Avatar
                     ForceCharacterFaceFrame = frame.Nodes["forceCharacterFaceFrameIndex"].ReadInt(),
                     ForceCharacterFaceHide = frame.Nodes["forceCharacterFaceHide"].ReadInt(0) != 0,
                     ForceCharacterFlip = frame.Nodes["forceCharacterFlip"].ReadInt(0) != 0,
-                    ForceCharacterDirection = frame.Nodes["forceCharacterDirection"].ReadInt(0)
+                    ForceCharacterDirection = frame.Nodes["forceCharacterDirection"].ReadInt(0),
+                    RemoveBody = frame.Nodes["removeBody"].ReadInt(0) != 0
                 };
             }
             finally

@@ -67,7 +67,6 @@ namespace WzComparerR2.Avatar
             this.Position = position;
             this.Z = z;
             this.Order = order;
-            this.Visible = true;
 
             // Capture calculated points; later Position edits do not recompute this snapshot.
             this.MapPoints = mapPoints == null ? Array.Empty<AvatarMapPoint>() : new List<AvatarMapPoint>(mapPoints).AsReadOnly();
@@ -75,11 +74,21 @@ namespace WzComparerR2.Avatar
             this.TransformGroupId = transformGroupId;
         }
 
+        private bool displayVisible = true;
+
         public AvatarLayerSource Source { get; private set; }
         public Point Position { get; set; }
         public int Z { get; private set; }
         public int Order { get; private set; }
-        public bool Visible { get; set; }
+
+        public bool Visible
+        {
+            get { return this.displayVisible && this.OcclusionVisible && this.FrameDisplayVisible; }
+            set { this.displayVisible = value; }
+        }
+
+        internal bool OcclusionVisible { get; set; } = true;
+        internal bool FrameDisplayVisible { get; set; } = true;
 
         public IReadOnlyList<AvatarMapPoint> MapPoints { get; }
         public int? AnchorGroupId { get; }

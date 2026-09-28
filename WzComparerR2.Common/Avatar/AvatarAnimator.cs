@@ -106,7 +106,8 @@ namespace WzComparerR2.Avatar
                 FacingLeft = source.FacingLeft,
                 EarType = source.EarType,
                 WeaponType = source.WeaponType,
-                WeaponIndex = source.WeaponIndex
+                WeaponIndex = source.WeaponIndex,
+                IncludeEquipment = source.IncludeEquipment
             };
             foreach (var part in source.Parts)
                 snapshot.SetPart(part.Key, part.Value);
@@ -122,6 +123,7 @@ namespace WzComparerR2.Avatar
                 && current.Emotion == previous.Emotion && current.EmotionFrame == previous.EmotionFrame
                 && current.FacingLeft == previous.FacingLeft && current.EarType == previous.EarType
                 && current.WeaponType == previous.WeaponType && current.WeaponIndex == previous.WeaponIndex
+                && ReferenceEquals(current.IncludeEquipment, previous.IncludeEquipment)
                 && current.ReservedSlots.SequenceEqual(previous.ReservedSlots) && current.Parts.Count == previous.Parts.Count
                 && current.Parts.All(part => previous.Parts.TryGetValue(part.Key, out AvatarPartInput other) && ReferenceEquals(part.Value, other));
         }

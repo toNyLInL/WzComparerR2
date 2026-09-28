@@ -29,6 +29,7 @@ namespace WzComparerR2.Avatar
         public bool ForceCharacterFaceHide { get; init; }
         public bool ForceCharacterFlip { get; init; }
         public int ForceCharacterDirection { get; init; }
+        public bool RemoveBody { get; init; }
     }
 
     public sealed record AvatarTamingSettings

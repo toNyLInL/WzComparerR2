@@ -106,6 +106,7 @@ namespace WzComparerR2.Avatar
         public AvatarAnimationFrame TamingFrame { get; init; }
         public bool FacingLeft { get; init; } = true;
         public bool RemoveBody { get; init; }
+        public bool FrameRemoveBody { get; init; }
         public bool FaceAllowed { get; init; }
     }
 
@@ -160,6 +161,7 @@ namespace WzComparerR2.Avatar
             foreach (AvatarLayoutLayer layer in this.Layers)
             {
                 layer.Visible = true;
+                layer.OcclusionVisible = true;
             }
         }
 

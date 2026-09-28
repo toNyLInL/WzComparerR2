@@ -32,6 +32,7 @@ namespace WzComparerR2.Avatar
         public bool FacingLeft { get; set; } = true;
         public int? WeaponType { get; set; }
         public int WeaponIndex { get; set; }
+        public Func<AvatarPartSlot, AvatarFrameSelection, bool> IncludeEquipment { get; set; }
         public IList<string> ReservedSlots { get; } = new List<string>();
 
         public IReadOnlyList<string> AvailableActions => this.Loader.Actions;
@@ -110,6 +111,16 @@ namespace WzComparerR2.Avatar
                     continue;
                 if (removeBody && !KeepWhenBodyRemoved(entry.Key))
                     continue;
+                if (entry.Key == AvatarPartSlot.Coat && this.parts.ContainsKey(AvatarPartSlot.Pants)
+                    && IsLongcoat(entry.Value))
+                {
+                    continue;
+                }
+                if ((int)entry.Key >= 0 && !AvatarLoader.IsTamingSlot(entry.Key)
+                    && this.IncludeEquipment?.Invoke(entry.Key, actualCharacter) == false)
+                {
+                    continue;
+                }
 
                 var input = removeBody && entry.Key == AvatarPartSlot.Body ? new AvatarPartInput(2000) : entry.Value;
                 resolved.Add(entry.Key, this.Loader.GetPart(entry.Key, input));
@@ -120,12 +131,6 @@ namespace WzComparerR2.Avatar
             {
                 throw new InvalidOperationException("Saddle and taming equipment require a taming resource.");
             }
-            if (resolved.TryGetValue(AvatarPartSlot.Coat, out var coat) && coat.Type == AvatarPartType.Longcoat
-                && resolved.ContainsKey(AvatarPartSlot.Pants))
-            {
-                throw new NotSupportedException("Simultaneous longcoat and pants require the client item-property compatibility policy.");
-            }
-
             // Head and retained equipment keep the effective character action, even with a blink body.
             var sources = new List<AvatarLayerSource>();
             var actionBody = removeBody ? new AvatarPartInput(2000) : bodyInput;
@@ -245,6 +250,7 @@ namespace WzComparerR2.Avatar
                 TamingFrame = tamingFrame,
                 FacingLeft = this.FacingLeft,
                 RemoveBody = removeBody,
+                FrameRemoveBody = tamingFrame?.RemoveBody == true,
                 FaceAllowed = showFace
             };
             AvatarLayout layout = new AvatarLayoutBuilder(zMap).Build(sources, tamingFrame != null, info, diagnostics);
@@ -272,6 +278,21 @@ namespace WzComparerR2.Avatar
             return slot == AvatarPartSlot.Body || slot == AvatarPartSlot.Head || slot == AvatarPartSlot.Face
                 || slot == AvatarPartSlot.Hair || slot == AvatarPartSlot.Cap || slot == AvatarPartSlot.EyeAccessory
                 || slot == AvatarPartSlot.Earrings || AvatarLoader.IsTamingSlot(slot);
+        }
+
+        private static bool IsLongcoat(AvatarPartInput input)
+        {
+            int? id = input.ItemId;
+            if (!id.HasValue && input.ImageNode != null)
+            {
+                string name = input.ImageNode.Text;
+                if (name.EndsWith(".img", StringComparison.OrdinalIgnoreCase))
+                    name = name.Substring(0, name.Length - 4);
+                if (int.TryParse(name, NumberStyles.None, CultureInfo.InvariantCulture, out int parsedId))
+                    id = parsedId;
+            }
+
+            return id.HasValue && AvatarLoader.GetPartCategory(id.Value).Type == AvatarPartType.Longcoat;
         }
 
         private static AvatarAnimationFrame SelectFrame(AvatarAnimationClip clip, int number)
