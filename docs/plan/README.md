@@ -14,4 +14,10 @@
 
 | 计划 | 状态 | 说明 |
 | --- | --- | --- |
-| [wz-to-unity-export.md](wz-to-unity-export.md) | draft | WZ 资源导出到外部引擎（以 Unity 为例）的三段式方案与里程碑 |
+| [wz-to-unity-export.md](wz-to-unity-export.md) | 进行中 | WZ 资源导出到外部引擎（以 Unity 为例）的三段式方案与里程碑 |
+
+## 规范
+
+| 规范 | 说明 |
+| --- | --- |
+| [spec/wz-export-schema.md](spec/wz-export-schema.md) | `wzexport` 中间格式 schema 1：目录结构、meta.json / manifest.json 字段字典、命名与校验规则 |

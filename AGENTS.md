@@ -4,7 +4,7 @@
 
 `AGENTS.md` 是分层文件：根目录这份讲全局，模块目录里的那份讲该模块的细节。**两者冲突时以更靠近代码的模块级文件为准**。
 
-现有分层文件：`WzComparerR2.WzLib/`、`WzComparerR2.Common/`、`WzComparerR2.PluginBase/`、`WzComparerR2/`（主程序）、`WzComparerR2.MapRender/`。
+现有分层文件：`WzComparerR2.WzLib/`、`WzComparerR2.Common/`、`WzComparerR2.PluginBase/`、`WzComparerR2/`（主程序）、`WzComparerR2.MapRender/`、`WzComparerR2.Export/`（离线导出器）。
 
 ---
 
@@ -27,6 +27,8 @@
 | 快速验证（推荐） | `dotnet build .\WzComparerR2\WzComparerR2.csproj -f net8.0-windows -c Debug` |
 | 单库验证 | `dotnet build .\WzComparerR2.WzLib\WzComparerR2.WzLib.csproj -f net8.0 -c Release`（`net6.0`、`net462` 同样可换） |
 | 全量（含全部插件） | `dotnet build .\WzComparerR2.sln -c Release -p:Platform="Any CPU"` |
+| 导出器（**不在 sln**，必须单独构建） | `dotnet build .\WzComparerR2.Export\WzComparerR2.Export.csproj -c Debug` |
+| 导出器回归（无 wz 样本） | `powershell -NoProfile -ExecutionPolicy Bypass -File .\WzComparerR2.Export\verify\verify-ui-export.ps1` |
 | CI 同款 | 见 `azure-pipelines.yml`：Restore → Build `Any CPU` → Build `x86` → 打 netfx/net6/net8 三个 zip |
 
 - 解决方案平台：`Any CPU` / `x86` / `x64`；CI 用 `Any CPU` 与 `x86` 各构建一次。
@@ -69,6 +71,7 @@ Debug 全量实测（`--no-incremental`）：`Any CPU` 19.5s / 91 警告 / 0 错
 | `WzComparerR2.Network` | 插件 | 在线聊天/用户列表，包体定义在 `Contracts/` | `Entry.cs`、`Contracts/Pack*.cs` |
 | `WzComparerR2.LuaConsole` | 插件 | NLua 脚本控制台 | `Entry.cs`、`Lua/`、`Examples/` |
 | `WzComparerR2.Updater` | WinExe | 独立更新器；其产物**以 EmbeddedResource 形式嵌入主程序** | `Program.cs`、`Updater` 相关 |
+| `WzComparerR2.Export` | 控制台 Exe，**仅 net8.0-windows，不在 sln** | 离线导出器：WZ → 引擎无关中间格式（当前：UI canvas → PNG + JSON） | `Program.cs`、`UiImageExporter.cs`、`verify/` |
 | `CharaSimResource` | 资源库（**git submodule**，toNyLInL fork，commit `fc9bdc6`） | 装备/道具模拟用的 resx 图片等资源 | `Resources/` |
 
 ---
@@ -167,6 +170,7 @@ Debug 全量实测（`--no-incremental`）：`Any CPU` 19.5s / 91 警告 / 0 错
 | `maprender` | `WzComparerR2.MapRender/**` | `WzLib/**`、`Common/Rendering/**` | 地图场景渲染、粒子、光效、性能 |
 | `ui-shell` | `WzComparerR2/*.cs`（`MainForm*`、`Frm*`、`Comparer/`、`Patcher/`、`Config/`）、`WzComparerR2.PluginBase/**` | 全部（只读） | 主窗体功能、比对器、补丁器、插件契约调整 |
 | `plugins` | `WzComparerR2.Avatar/**`、`WzComparerR2.Network/**`、`WzComparerR2.LuaConsole/**`、`WzComparerR2.Updater/**` | `PluginBase/**` | 纸娃娃、聊天、Lua 控制台、更新器 |
+| `wz-export` | `WzComparerR2.Export/**`、`docs/plan/spec/**` | `WzLib/**`（只读）、`Common/Animation/Frame.cs`（只读，语义对齐） | 导出器命令、分组/命名规则、中间格式 schema、无样本回归脚本 |
 | `build-ci` | `*.sln`、`Build/**`、`azure-pipelines.yml`、`UpdateLogs/**`、`AGENTS.md` | 全部（只读） | 构建配置、打包、变更日志 |
 
 > 注意 `WzComparerR2.Common` 根命名空间是 `WzComparerR2`，跨项目移动类型会改变其命名空间可见性——移动 `Common/CharaSim` 与 `WzComparerR2/CharaSim` 之间的类型属于**破坏性变更**，必须由主代理裁决。

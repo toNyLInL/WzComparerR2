@@ -1,0 +1,24 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <AssemblyName>wzexport</AssemblyName>
+    <RootNamespace>WzComparerR2.Export</RootNamespace>
+    <!-- 离线导出器不随主程序打包，只在本机/CI 上手工构建。 -->
+    <IsPublishable>false</IsPublishable>
+    <AllowUnsafeBlocks>True</AllowUnsafeBlocks>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+  </PropertyGroup>
+  <Import Project="$(ProjectDir)..\Build\Common.props" />
+  <ItemGroup>
+    <!-- 导出器只消费解析层，不引用 Common / WinForms / MonoGame。 -->
+    <ProjectReference Include="..\WzComparerR2.WzLib\WzComparerR2.WzLib.csproj" />
+  </ItemGroup>
+  <ItemGroup Condition="Exists('..\Build\CommonAssemblyInfo.cs')">
+    <Compile Include="..\Build\CommonAssemblyInfo.cs">
+      <Link>Properties\CommonAssemblyInfo.cs</Link>
+    </Compile>
+  </ItemGroup>
+</Project>

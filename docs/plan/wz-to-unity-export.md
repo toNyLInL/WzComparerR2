@@ -2,14 +2,14 @@
 
 | 项 | 值 |
 | --- | --- |
-| 状态 | **draft（待决策，见 §9）** |
+| 状态 | **进行中**：M1 已定稿，M2 的 UI canvas 部分已落地，见 §11 |
 | 创建日期 | 2026-10-21 |
 | 分支 | `chore/submodule-repoint` |
 | 来源 | 本次会话：资源查看器导出能力调研 + Debug 构建基线 + Unity adapter 方案设计 |
-| 关联代码 | `WzComparerR2.WzLib`、`WzComparerR2.Common`、`WzComparerR2` |
-| 本计划产物 | `docs/plan/`（本文件 + 后续 `spec/` 规范） |
+| 关联代码 | `WzComparerR2.WzLib`、`WzComparerR2.Common`、`WzComparerR2`、`WzComparerR2.Export` |
+| 本计划产物 | `docs/plan/`（本文件 + `spec/wz-export-schema.md`） |
 
-> 本文件只描述**待做**的事。已经完成的事见 §10，不重复排期。
+> 本文件只描述**待做**的事。已经完成的事见 §10/§11，不重复排期。
 > 本次不涉及用户可见行为变更，因此**不写 `UpdateLogs/dev.md`**（该文件只记行为变化）。
 
 ---
@@ -150,17 +150,21 @@ wz-export/
 
 ### M1｜规范定稿（规模 S，无代码风险）
 
+- **状态：已完成（2026-10-23）** → [spec/wz-export-schema.md](spec/wz-export-schema.md)（schema 1：字段字典、命名规则、校验规则）。
 - 产出：`docs/plan/spec/wz-export-schema.md`（本文件 §4/§5 的完整版 + 字段字典 + 示例产物）。
 - 验收：能据此**不写代码**手工核对一份导出目录是否合规；`schema` 版本策略写明。
 - 依赖：无。**建议 M1 先于一切代码**（schema 定错则 M4 返工）。
 
 ### M2｜导出器 P0：静态 canvas（规模 M）
 
-- 新建 `WzComparerR2.Export/`（`net8.0` 控制台，`ProjectReference` 仅 `WzComparerR2.WzLib`）。
+- **状态：部分完成（2026-10-23）** —— UI 类 canvas 的「PNG + meta.json + manifest.json + `--verify`」已可用，见 §11；
+  未做：`--list <file>` 批量清单、同内容去重、音频（属 M3）。
+- 新建 `WzComparerR2.Export/`（`net8.0-windows` 控制台，`ProjectReference` 仅 `WzComparerR2.WzLib`）。
 - 命令形态：`wzexport --wz <file|folder> --node "<wz 路径>" --out <dir>`，支持 `--list <file>` 批量。
 - 产出：PNG + `meta.json` + `manifest.json`。
 - 验收：① 导出后可被 `System.Drawing` 重新打开且尺寸 = 声明值；② 同一输入重跑**字节一致**；③ 目录结构与 §4 一致。
 - 风险：新项目会进 `WzComparerR2.sln`，CI 会连带构建。缓解：`IsPublishable=false`、不进打包产物；若 CI 时间敏感则 sln 内排除。
+  **实际处理**：当前**未加进 `.sln`**（CI 不受影响），构建命令见 §11。
 
 ### M3｜动画 + 音频（规模 M）
 
@@ -207,7 +211,7 @@ wz-export/
 
 本仓库没有测试工程、CI 只构建不运行，所以每个里程碑自带：
 
-1. **断言脚本**（导出器内 `--verify` 模式）：尺寸 = `canvas.width/height`、帧数 = 节点数、`z ∈ [-9999, 9999]`、`delay ∈ (0, 60000]`。
+1. **断言脚本**（导出器内 `--verify` 模式）：尺寸 = `canvas.width/height`、帧数 = 节点数、`z ∈ [-9999, 9999]`、`delay > 0`（实测客户端有 `600000` 的长定格，不设上界）。
 2. **字节稳定**：固定 PNG 编码参数，同输入二次导出 diff 为空。
 3. **人工抽样**：每类资产抽 1~3 个，与 QuickView/MapRender 截图比对（附截图进 PR/计划更新）。
 4. **构建门槛**：仍以根 `AGENTS.md` §8 为准（`net8.0-windows` 主程序构建通过且不新增警告）。
@@ -232,3 +236,59 @@ wz-export/
 | Debug 构建基线 | `Any CPU` 与 `x86` 均 0 错误（19.5s / 25.5s，91 警告，全为历史遗留） |
 | 导出能力调研 | 结论见 §1.1，三个坑见 §1.2 |
 | 中间格式与语义映射 | 结论见 §4/§5（尚是草案，M1 定稿） |
+
+---
+
+## 11. 进展（按时间倒序）
+
+### 2026-10-23：真实客户端（GMS v271 / Steam）实测
+
+数据目录 `G:\SteamLibrary\steamapps\common\MapleStory\Data`，16 个 wz 分组（Base / Character / Effect / Etc / Item / Map / Mob / Morph / Npc / Quest / Reactor / Skill / Sound / String / TamingMob / UI），
+每组是「空 entry wz + `<名>_000.wz…` 分卷 + `<名>.ini` + `_Canvas` 伴生 wz」结构，合计约 50GB。WzLib 识别为 **wz 版本 271**，全部读得通。
+
+| 导出目标 | 分组 | 帧 | PNG 体积 | 耗时（含 `--verify` 两遍） | 结果 |
+| --- | --- | --- | --- | --- | --- |
+| `Base`（整包，0.2MB） | 535 | 1123 | 0.13MB | 4.2s | 通过 |
+| `Morph`（整包，1.5MB） | 4209 | 17440 | 254MB | 102s | 通过 |
+| `UI` → `Basic.img` | 800 | 2554 | 6.3MB | 9.5s | 通过 |
+| `UI` → `UIWindow.img` | 2607 | 5159 | 47.3MB | 44.4s | 通过 |
+
+实测结论（都已回写到实现/规范）：
+
+1. **`_outlink` 是 v271 的主形态**：`UI.wz` 里的帧大量 `_outlink` 指向 `UI/_Canvas/UIWindow.img/...`（抽样 400 份 meta：934 帧带 `link`、2 帧带 `uol`、0 个 `linkError`）。跨 wz 解引用与 `link` 字段记录正常。
+2. **`delay` 上界不存在**：实测最高 `600000ms`（另有 `180000`），原计划里 `(0, 60000]` 的断言过窄 → 改为只断言 `> 0`，`> 60000` 只在导出时汇总提示一次（9/25153 帧）。
+3. **整包导出 `UI` 会重复**：`_Canvas` 子树会被当成普通目录再导一遍，与 outlink 物化出来的图内容重复 → 内容去重（§5.6）的优先级应提前；当前建议按 img 定点导出。
+4. `--verify` 会把导出跑两遍，耗时翻倍；大 wz 上建议先 `list` 定点再导出。
+
+### 2026-10-23：UI 图片导出落地（M1 + M2 的 UI 部分）
+
+| 事项 | 结果 |
+| --- | --- |
+| 规范 | 新增 [spec/wz-export-schema.md](spec/wz-export-schema.md)（schema 1，冻结 UI canvas 的目录/meta/manifest/命名/校验契约） |
+| 新工程 | 新增 `WzComparerR2.Export/`（`net8.0-windows` 控制台，仅引用 `WzComparerR2.WzLib`，未加入 `.sln`，`IsPublishable=false`） |
+| 命令 | `wzexport ui --wz <路径> [--wz …] [--node <节点>] --out <目录> [--kind ui] [--force] [--verify]`；`wzexport list …` 只统计不落盘 |
+| 分组语义 | 以「父节点下的 canvas 子节点 = 同一分组的帧」为唯一规则，兼容 `Ani/{0,1}` 与 `Basic/{backgrnd,tile}` 两种结构；与 `Frame.CreateFromNode` 的 origin/z/delay/a0/a1 语义对齐 |
+| 引用解析 | 支持 `Wz_Uol` 链、`_inlink`（同 img 相对路径）、`_outlink`/`source`（跨 wz 文件，需额外 `--wz`）；解析失败保留 `linkError` 并回退到链接节点自身 |
+| 纹理 | 一律烘 RGBA32 PNG；BC7 的 4 对齐裁边用 `sourceWidth/sourceHeight` 记录原尺寸；`delay=0` 固化为 120 |
+| 校验 | `--verify`：PNG 可重开且尺寸 = meta、帧数/索引/hash 一致、`z/delay/a0/a1` 区间、二次导出逐字节一致 |
+| 无样本回归 | 新增 `WzComparerR2.Export/verify/verify-ui-export.ps1`：按 `Wz_Image.ExtractImg` 二进制布局合成 `.img` 夹具（含 Canvas 子属性、Vector2D、UOL、`_inlink`、跨文件 `_outlink`、非法文件名），14 组断言全绿 |
+
+构建与验证命令：
+
+```powershell
+dotnet build .\WzComparerR2.Export\WzComparerR2.Export.csproj -c Debug
+powershell -NoProfile -ExecutionPolicy Bypass -File .\WzComparerR2.Export\verify\verify-ui-export.ps1
+```
+
+真实客户端手工验证（无 wz 样本时唯一的正确性来源）：
+
+```powershell
+.\WzComparerR2.Export\bin\Debug\net8.0-windows\wzexport.exe list --wz "<客户端>\Data\UI.wz" --node "UIWindow.img"
+.\WzComparerR2.Export\bin\Debug\net8.0-windows\wzexport.exe ui --wz "<客户端>\Data\UI.wz" --node "UIWindow.img" --out D:\export\ui --verify
+```
+
+期望：`list` 报告的帧数与主程序 QuickView 展开该目录看到的图片数一致；导出目录里每个 PNG 的尺寸与
+QuickView「SavePicture」保存出来的图一致；`--verify` 输出「校验通过」。
+
+尚未做（对应 M2 剩余项与 M3）：`--list <file>` 批量清单、同内容 canvas 的 hash 去重/引用计数、
+音频 `Wz_Sound`、条目化（`sprite/<wztype>/<id>` 的 id 级目录）。
