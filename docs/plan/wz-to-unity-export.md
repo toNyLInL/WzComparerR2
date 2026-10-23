@@ -241,6 +241,18 @@ wz-export/
 
 ## 11. 进展（按时间倒序）
 
+### 2026-10-23：Item 全量导出（真实客户端）+ 绝对路径 UOL 修复
+
+| 事项 | 结果 |
+| --- | --- |
+| 目标 | `Data\Item`（Item.wz + Cash / Consume / Etc / Install / Pet / Special 六个子 wz）→ `G:\MapleStory\WzExport`，`--kind item --skip _Canvas,WZ2Lua` |
+| 规模 | **87,593 组 / 304,797 帧 / 2.4 GB**（392,391 个文件 = 305k PNG + 88k meta + 26MB manifest） |
+| 耗时 | 纯导出 8.6 min；`--verify` 全流程 59.6 min（校验要 305k 次 GDI+ 重开 + 784k 次 SHA-256，大包上这是主要成本） |
+| 发现 | 首次跑有 1,348 帧被跳过：674 个道具的 `icon`/`iconRaw` 用**绝对路径 UOL**（`/Item/Cash/0515.img/05158018/info/icon`）复用别的道具贴图，而 `Wz_Uol.HandleUol` 只实现相对语义（以父节点为起点），首段为空直接解析失败 |
+| 修复 | 导出器新增 `WzAssetSource.ResolveUolTarget`：UOL 以 `/` 开头时先按 wz 全局路径解析，失败再退回相对语义；回归夹具增加绝对路径 UOL 用例 |
+| 复跑结果 | 87,593 组 / 304,797 帧（+674 组 / +1,348 帧），`--verify` 通过；独立抽样 200 组 / 728 帧 0 问题 |
+| 待决策 | `Wz_Uol.HandleUol` 本身支持绝对路径属于 **WzLib 改动**（会让主程序 QuickView 也显示这些复用图标），需要单独评估对现有行为的影响 |
+
 ### 2026-10-23：M2 收尾 —— 批量清单 `--list` 与子树排除 `--skip`
 
 | 事项 | 结果 |

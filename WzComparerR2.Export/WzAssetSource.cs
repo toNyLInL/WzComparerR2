@@ -242,7 +242,7 @@ namespace WzComparerR2.Export
                     link.UolPath = uol.Uol;
                 }
 
-                Wz_Node next = uol.HandleUol(current);
+                Wz_Node next = this.ResolveUolTarget(current, uol);
                 if (next == null)
                 {
                     if (link != null)
@@ -279,6 +279,25 @@ namespace WzComparerR2.Export
 
             Wz_Node resolved = target.ResolveUol();
             return resolved ?? target;
+        }
+
+        /// <summary>
+        /// 解析 UOL。以 '/' 开头的是「wz 全局路径」——v271 客户端用 `/Item/Cash/0515.img/x/info/icon`
+        /// 这种写法复用别的道具贴图，WzLib 的相对语义（以父节点为起点）解析不了，这里先按全局路径试。
+        /// </summary>
+        private Wz_Node ResolveUolTarget(Wz_Node current, Wz_Uol uol)
+        {
+            string path = uol.Uol;
+            if (!string.IsNullOrEmpty(path) && path[0] == '/')
+            {
+                Wz_Node global = this.FindGlobalNode(path.TrimStart('/'));
+                if (global != null)
+                {
+                    return global;
+                }
+            }
+
+            return uol.HandleUol(current);
         }
 
         private Wz_Node ResolveLinkedNode(Wz_Node node, string linkPath)

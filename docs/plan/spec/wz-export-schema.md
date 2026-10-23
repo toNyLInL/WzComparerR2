@@ -124,7 +124,7 @@
 | `delay` | int | 毫秒，**0 已固化成 120**，恒 `> 0`；客户端会用 `600000`/`180000` 这类超长值表示「定格」，属正常数据，**不设上界** |
 | `a0`/`a1` | int | 帧内 alpha 端点，默认 255 |
 | `source` | string | 帧节点的 wz 符号路径 |
-| `uol` | string | 仅当帧由 `Wz_Uol` 跳转而来时出现，记录原始 UOL 路径 |
+| `uol` | string | 仅当帧由 `Wz_Uol` 跳转而来时出现，记录原始 UOL 路径。以 `/` 开头表示 **wz 全局路径**（v271 客户端用它复用别的道具贴图，如 `/Item/Cash/0515.img/05158018/info/icon`），导出器按全局路径解析后再退回相对语义 |
 | `link` | string | 仅当帧带 `_inlink`/`_outlink`/`source` 时出现，记录链接路径原文 |
 | `inlink` | bool | `link` 是 `_inlink`（同 img 相对路径）时为 true |
 | `linkError` | string | 链接解析失败原因（此时 PNG 退回链接节点自身的 canvas） |

@@ -256,6 +256,7 @@ $fixtureRoot = @{
             ) }
             @{ name = 'uol'; type = 'Uol'; path = '../Ani/1' }
             @{ name = 'a:b'; type = 'Canvas'; width = 3; height = 1; seed = 201; props = @() }
+            @{ name = 'abs'; type = 'Uol'; path = '/Fixture.img/Ani/1' }
         ) }
         @{ name = 'Out'; type = 'Property'; children = @(
             @{ name = 'linked0'; type = 'Canvas'; width = 1; height = 1; seed = 202; props = @(
@@ -410,7 +411,7 @@ if ($basic) {
 # 5) Links 分组：_inlink / UOL / 文件名清洗，尺寸不一致 -> uniform=false
 $links = Read-Json (Join-Path $uiRoot 'Links\meta.json')
 if ($links) {
-    Assert-Equal 3 $links.frames.Count 'Links 帧数'
+    Assert-Equal 4 $links.frames.Count 'Links 帧数'
     Assert-Equal 'False' $links.uniform 'Links 分组不应 uniform'
     Assert-True ($null -eq $links.PSObject.Properties['canvas']) 'uniform=false 时不应有 canvas 块'
 
@@ -427,6 +428,11 @@ if ($links) {
     Assert-Equal 'a:b' $links.frames[2].name '第三帧节点名应保留原文'
     Assert-Equal 'a_b.png' $links.frames[2].png '非法文件名字符应被清洗'
     Assert-Equal 3 $links.frames[2].width '清洗节点名后的帧宽度'
+
+    # 绝对路径 UOL（v271 的 /Item/... 写法）
+    Assert-Equal '/Fixture.img/Ani/1' $links.frames[3].uol '绝对路径 UOL 应记录原路径'
+    Assert-Equal 5 $links.frames[3].width '绝对路径 UOL 应解析到目标 canvas'
+    Assert-True ($null -eq $links.frames[3].PSObject.Properties['linkError']) '绝对路径 UOL 不应有解析错误'
 }
 
 # 6) Out 分组：跨文件 _outlink
@@ -449,8 +455,8 @@ if ($manifest) {
     Assert-Equal 'ui' $manifest.kind 'manifest.kind'
     Assert-Equal 'Fixture.img' $manifest.root 'manifest.root'
     Assert-Equal 6 $manifest.counts.groups 'manifest.counts.groups'
-    Assert-Equal 10 $manifest.counts.frames 'manifest.counts.frames'
-    Assert-Equal 10 $manifest.counts.pngFiles 'manifest.counts.pngFiles'
+    Assert-Equal 11 $manifest.counts.frames 'manifest.counts.frames'
+    Assert-Equal 11 $manifest.counts.pngFiles 'manifest.counts.pngFiles'
     Assert-Equal 6 $manifest.assets.Count 'manifest.assets 数量'
     Assert-Equal 1 $manifest.targets.Count 'manifest.targets 数量（单目标）'
     Assert-Equal 'Fixture.img' $manifest.targets[0] 'manifest.targets[0]'
@@ -486,7 +492,7 @@ Assert-Equal 104 $pixel[3] 'Ani/0.png 像素 B'
 $listResult = Invoke-Exporter @('list', '--wz', $fixturePath, '--wz', $otherPath)
 Assert-Equal 0 $listResult.ExitCode 'list 命令退出码'
 Assert-True ($listResult.Output -match '6 个分组') 'list 应统计到 6 个分组'
-Assert-True ($listResult.Output -match '10 帧') 'list 应统计到 10 帧'
+Assert-True ($listResult.Output -match '11 帧') 'list 应统计到 11 帧'
 
 # 11) --node 下钻（目录）
 $aniOut = Join-Path $WorkDirectory 'out-ani'
@@ -525,7 +531,7 @@ Assert-True (-not (Test-Path (Join-Path $skipOut 'sprite\ui\Fixture\_Canvas'))) 
 $skipManifest = Read-Json (Join-Path $skipOut 'manifest.json')
 if ($skipManifest) {
     Assert-Equal 5 $skipManifest.counts.groups '--skip 后的分组数'
-    Assert-Equal 9 $skipManifest.counts.frames '--skip 后的帧数'
+    Assert-Equal 10 $skipManifest.counts.frames '--skip 后的帧数'
 }
 
 # 16) --skip 支持逗号分隔与通配符
