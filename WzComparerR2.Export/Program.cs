@@ -50,6 +50,15 @@ namespace WzComparerR2.Export
 
             try
             {
+                if (options.Command == ExportCommand.Verify)
+                {
+                    var verifier = new ExistingOutputVerifier(
+                        options.OutputDirectory,
+                        new ExportLogger(options.Quiet, options.Verbose),
+                        options.Deep);
+                    return verifier.Run() == 0 ? ExitOk : ExitVerifyFailed;
+                }
+
                 return Run(options);
             }
             catch (UsageException ex)

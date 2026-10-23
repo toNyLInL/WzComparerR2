@@ -241,6 +241,19 @@ wz-export/
 
 ## 11. 进展（按时间倒序）
 
+### 2026-10-23：`verify` 命令（只校验产物，不重导）
+
+Item 全量交付时 `--verify` 要重导一遍，30 万帧的包跑了 60 分钟（其中 51 分钟是校验：305k 次
+GDI+ 重开 + 784k 次 SHA-256）。新增只读校验模式：
+
+| 项 | 说明 |
+| --- | --- |
+| 命令 | `wzexport verify --out <目录> [--deep]`；不读 wz、不重新导出 |
+| 断言 | manifest 与磁盘一致（meta 的 SHA-256、帧数、counts）、逐帧 PNG 头尺寸 = meta、索引连续、z/delay/a0/a1 区间 |
+| 实现 | 新增 `JsonReader`（手写极简 JSON 读取）、`PngHeader`（只读签名 + IHDR，绕开 GDI+）、`ExistingOutputVerifier`（按资产并行的只读校验） |
+| 实测 | `G:\MapleStory\WzExport`（87,593 组 / 304,797 帧）：串行 1275s → 并行（8 线程）+ 去掉多余 stat 后 **196.8s**，与 60 分钟的 `--verify` 相比约 18× 加速，断言不变 |
+| 回归 | 夹具新增 4 组用例：`verify` 通过、`--deep` 通过、损坏 PNG / 缺失 PNG 返回 3、`verify` 与 `--node`/缺 `--out` 返回 1 |
+
 ### 2026-10-23：Item 全量导出（真实客户端）+ 绝对路径 UOL 修复
 
 | 事项 | 结果 |

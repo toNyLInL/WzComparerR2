@@ -27,6 +27,9 @@ WZ → 引擎无关中间格式（PNG + JSON）的**离线**导出器，产物�
 | `JsonTextWriter.cs` / `JsonExportWriter.cs` | 手写 JSON（2 空格缩进、`\n`、UTF-8 无 BOM），保证字节稳定 |
 | `WzTreeLister.cs` | `list --depth <n>` 的节点树打印（只读，用来在大 wz 上先看结构） |
 | `ExportVerifier.cs` | `--verify` 的断言与目录比对 |
+| `ExistingOutputVerifier.cs` | `verify --out` 命令：只校验已导出产物（manifest/meta/PNG 头/区间），按资产并行 |
+| `JsonReader.cs` | 极简 JSON 读取（只服务自己的 manifest/meta） |
+| `PngHeader.cs` | 读 PNG 签名 + IHDR 尺寸，不经过 GDI+（大包校验用） |
 | `verify/verify-ui-export.ps1` | 无 wz 样本的端到端回归：合成 `.img` 夹具 + 断言 |
 
 ## 3. 硬性规则
@@ -59,6 +62,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\WzComparerR2.Export\verify
 - 第一条必须 **0 error 且 0 warning**（新工程没有历史警告）。
 - 第二条在没有 wz 样本时是唯一可自动化的端到端验证；改了分组/链接/命名/JSON 就必须跑它。
 - 有真实客户端时补一条人工路径：`wzexport list --wz UI.wz --node "UIWindow.img"` 的帧数要与 QuickView 一致。
+- 大包交付前用 `wzexport verify --out <目录>` 复检（不读 wz、并行读盘）；需要查「图片能不能解」时加 `--deep`。
 - 真实 v271 客户端的 `_Canvas` 是伴生子 wz：整包导出 UI 时用 `--skip _Canvas,WZ2Lua` 避免同一张图在
   「引用处 + 伴生处」各写一遍；需要多张图时优先用 `--list` 批量清单定点导出。
 
@@ -68,3 +72,4 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\WzComparerR2.Export\verify
 - 不要把 `Common` 的 `Frame`/`FrameAnimationData` 搬过来（会拖进 MonoGame）：只对齐**语义**，不共享代码。
 - 不要为了"顺手"改 `WzLib` 的解析行为；解析层的问题回 `WzLib` 单独修。
 - 不要加 `async`/并行导出（`Wz_File.ReadLock` 目前按单文件串行设计）。
+  例外：`verify --out` 只读产物、不碰 wz，按资产并行是允许的（见 `ExistingOutputVerifier`）。

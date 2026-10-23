@@ -185,9 +185,11 @@
 
 ---
 
-## 7. 校验（`--verify`）
+## 7. 校验
 
-`wzexport ui … --verify` 在导出后执行四类断言，任一失败返回退出码 3：
+两种模式，任一断言失败都返回退出码 3：
+
+**A. 导出后立刻校验**：`wzexport ui … --verify`（读 wz，导出两遍）
 
 1. **可重开**：每个 PNG 用 GDI+ 重新打开，尺寸必须等于 meta 里的 `width/height`；
 2. **一致性**：`frames[].index` 连续、帧数等于 manifest 计数、`meta.json` 的 SHA-256 等于 manifest 记录；
@@ -195,9 +197,22 @@
 4. **字节稳定**：同一输入再导出一份到 `<out>.verify`，逐文件比对（跳过 `manifest.json`），
    比对完删除临时目录。
 
+> 大规模产物的经验值：Image/Item 级（30 万帧 / 2.4GB）导出约 9 分钟，`--verify` 全流程约 60 分钟
+> （其中校验占大头：305k 次图片重开 + 784k 次 SHA-256）；改用 `verify --out` 复检则是分钟级。
+
+**B. 只校验已有产物**：`wzexport verify --out <目录> [--deep]`（**不读 wz、不重新导出**）
+
+- 依据 `manifest.json` 逐个资产核对：`meta.json` 存在且 SHA-256 与 manifest 记录一致、
+  帧数与 manifest 一致、`frames[].index` 连续；
+- 逐帧检查 PNG：读出签名与 IHDR 尺寸与 `meta.width/height` 比对，`z/delay/a0/a1` 在合法区间；
+- `--deep` 额外用 GDI+ 重新打开每张图（能查出「头部合法但内容损坏」，代价高）；
+- 默认按资产并行读盘（≤8 线程），30 万帧的包约数分钟；`--verify` 则要重导一遍、慢一个量级。
+- 用途：交付前的复检、拷贝/传输后的一致性抽查（不依赖 wz 与 WzLib）。
+
 不含 wz 样本的自动化回归见 `WzComparerR2.Export/verify/verify-ui-export.ps1`：
 它按 `Wz_Image.ExtractImg` 的二进制布局现场合成 `.img` 夹具，覆盖属性树、Canvas 子属性、
-Vector2D、UOL、`_inlink`、`_outlink`、非法文件名与 `--force` 保护。
+Vector2D、UOL（含绝对路径）、`_inlink`、`_outlink`、非法文件名、`--force` 保护，
+以及 `verify` 的通过/损坏/缺失/参数互斥用例。
 
 ---
 

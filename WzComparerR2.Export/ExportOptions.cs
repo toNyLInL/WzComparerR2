@@ -14,6 +14,9 @@ namespace WzComparerR2.Export
 
         /// <summary>只统计并打印将要导出的内容，不写任何文件。</summary>
         List = 1,
+
+        /// <summary>只校验已经导出的产物，不读 wz、不重新导出。</summary>
+        Verify = 2,
     }
 
     /// <summary>
@@ -63,6 +66,9 @@ namespace WzComparerR2.Export
         public bool Force { get; private set; }
 
         public bool Verify { get; private set; }
+
+        /// <summary>verify 命令的深度模式：额外用 GDI+ 重新打开每张 PNG。</summary>
+        public bool Deep { get; private set; }
 
         public bool Quiet { get; private set; }
 
@@ -141,6 +147,10 @@ namespace WzComparerR2.Export
                         options.Verify = true;
                         break;
 
+                    case "--deep":
+                        options.Deep = true;
+                        break;
+
                     case "--quiet":
                         options.Quiet = true;
                         break;
@@ -179,6 +189,7 @@ namespace WzComparerR2.Export
                 "  ui     把节点下的 canvas 导出为 <out>/sprite/<kind>/<相对路径>/{<帧>.png, meta.json}，",
                 "         并写 <out>/manifest.json。省略命令时默认执行 ui。",
                 "  list   只打印将要导出的分组、帧数与尺寸，不写文件；用于导出前核对。",
+                "  verify 只校验已经导出的目录（读 manifest.json + meta.json + PNG 头），不读 wz、不重导。",
                 "         加 --depth <n> 则改为打印节点树（只看结构，不导出）。",
                 "",
                 "选项：",
@@ -194,6 +205,7 @@ namespace WzComparerR2.Export
                 "  --force       允许写入非空输出目录。",
                 "  --verify      导出后再跑一遍断言：PNG 可重新打开且尺寸与 meta 一致、帧数一致、",
                 "                z/delay 在合法区间、二次导出逐字节一致。",
+                "  --deep        verify 命令专用：除 PNG 头外，再用 GDI+ 重新打开每张图（慢，能查出头部合法但内容损坏）。",
                 "  --quiet       只输出错误。",
                 "  --verbose     输出每个分组的明细与异常堆栈。",
                 "  -h, --help    显示本帮助。",
@@ -214,8 +226,10 @@ namespace WzComparerR2.Export
                     return ExportCommand.Ui;
                 case "list":
                     return ExportCommand.List;
+                case "verify":
+                    return ExportCommand.Verify;
                 default:
-                    throw new UsageException($"无法识别的命令：{arg}（可用：ui、list）");
+                    throw new UsageException($"无法识别的命令：{arg}（可用：ui、list、verify）");
             }
         }
 
@@ -248,10 +262,43 @@ namespace WzComparerR2.Export
             return string.Join("/", segments);
         }
 
+        private void ValidateVerify()
+        {
+            if (string.IsNullOrWhiteSpace(this.OutputDirectory))
+            {
+                throw new UsageException("verify 命令必须用 --out 指定要校验的目录。");
+            }
+            this.OutputDirectory = Path.GetFullPath(this.OutputDirectory);
+            if (!Directory.Exists(this.OutputDirectory))
+            {
+                throw new UsageException($"要校验的目录不存在：{this.OutputDirectory}");
+            }
+
+            if (this.WzPaths.Count > 0 || !string.IsNullOrEmpty(this.NodePath) || this.ListFiles.Count > 0
+                || this.SkipPatterns.Count > 0 || this.ListDepth != null)
+            {
+                throw new UsageException("verify 命令只接受 --out 与 --deep，其它导出参数没有意义。");
+            }
+            if (this.Force || this.Verify)
+            {
+                throw new UsageException("verify 命令不需要 --force / --verify。");
+            }
+            if (this.rawSkipPatterns.Count > 0)
+            {
+                throw new UsageException("verify 命令不支持 --skip。");
+            }
+        }
+
         private void Validate()
         {
             if (this.ShowHelp)
             {
+                return;
+            }
+
+            if (this.Command == ExportCommand.Verify)
+            {
+                this.ValidateVerify();
                 return;
             }
 

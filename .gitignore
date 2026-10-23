@@ -199,3 +199,6 @@ FakesAssemblies/
 OldVer/
 !References/x86/
 !References/x64/
+
+# 本地临时工作目录（导出器探针、批量导出中间产物等，不入库）
+/temp/

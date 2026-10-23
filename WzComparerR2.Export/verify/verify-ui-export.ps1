@@ -566,6 +566,42 @@ if ($batchManifest) {
 # 18) --list 与 --node 互斥
 $conflictResult = Invoke-Exporter @('ui', '--wz', $fixturePath, '--list', $listFile, '--node', 'Ani', '--out', (Join-Path $WorkDirectory 'out-conflict'))
 Assert-Equal 1 $conflictResult.ExitCode '--list 与 --node 同时使用应返回 1'
+# 19) verify 命令：只校验已存在产物，不重导
+$verifyResult = Invoke-Exporter @('verify', '--out', $outDir)
+Assert-Equal 0 $verifyResult.ExitCode "verify 已存在产物应通过（输出：$($verifyResult.Output)）"
+Assert-True ($verifyResult.Output -match '校验通过') 'verify 应输出校验通过'
+Assert-True ($verifyResult.Output -match '11 帧') 'verify 应统计到 11 帧'
+
+# 20) verify --deep：额外用 GDI+ 重开每张图
+$deepResult = Invoke-Exporter @('verify', '--out', $outDir, '--deep')
+Assert-Equal 0 $deepResult.ExitCode 'verify --deep 应通过'
+Assert-True ($deepResult.Output -match 'GDI\+ 深度重开') '--deep 应报告深度重开的张数'
+
+# 21) verify 能发现损坏与缺失
+$brokenPng = Join-Path $outDir 'sprite\ui\Fixture\Ani\0.png'
+$brokenBackup = [System.IO.File]::ReadAllBytes($brokenPng)
+[System.IO.File]::WriteAllBytes($brokenPng, [byte[]](1, 2, 3, 4))
+$brokenResult = Invoke-Exporter @('verify', '--out', $outDir)
+Assert-Equal 3 $brokenResult.ExitCode '损坏的 PNG 应让 verify 返回 3'
+Assert-True ($brokenResult.Output -match 'PNG 头无效') '应报告 PNG 头无效'
+[System.IO.File]::WriteAllBytes($brokenPng, $brokenBackup)
+
+$missingPng = Join-Path $outDir 'sprite\ui\Fixture\Ani\1.png'
+$missingBackup = [System.IO.File]::ReadAllBytes($missingPng)
+Remove-Item $missingPng -Force
+$missingPngResult = Invoke-Exporter @('verify', '--out', $outDir)
+Assert-Equal 3 $missingPngResult.ExitCode '缺失的 PNG 应让 verify 返回 3'
+Assert-True ($missingPngResult.Output -match '缺少 PNG') '应报告缺少 PNG'
+[System.IO.File]::WriteAllBytes($missingPng, $missingBackup)
+
+$restoreResult = Invoke-Exporter @('verify', '--out', $outDir)
+Assert-Equal 0 $restoreResult.ExitCode '恢复文件后应重新通过'
+
+# 22) verify 的参数约束
+$vConflict = Invoke-Exporter @('verify', '--out', $outDir, '--node', 'Ani')
+Assert-Equal 1 $vConflict.ExitCode 'verify 与 --node 同时使用应返回 1'
+$vNoOut = Invoke-Exporter @('verify')
+Assert-Equal 1 $vNoOut.ExitCode 'verify 缺少 --out 应返回 1'
 
 # ---------------------------------------------------------------- 结果
 
