@@ -74,6 +74,17 @@ namespace WzComparerR2.Export
             writer.Name("root");
             writer.Value(manifest.Root);
 
+            if (manifest.Targets.Count > 0)
+            {
+                writer.Name("targets");
+                writer.StartArray();
+                foreach (string target in manifest.Targets)
+                {
+                    writer.Value(target);
+                }
+                writer.EndArray();
+            }
+
             writer.Name("files");
             writer.StartArray();
             foreach (WzFileInfo file in manifest.Files)

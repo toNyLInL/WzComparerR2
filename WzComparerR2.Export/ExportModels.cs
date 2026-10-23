@@ -135,6 +135,9 @@ namespace WzComparerR2.Export
 
         public string Root { get; set; }
 
+        /// <summary>本次导出覆盖的目标节点符号路径（--list 批量时会多于一个）。</summary>
+        public List<string> Targets { get; } = new List<string>();
+
         public List<WzFileInfo> Files { get; }
 
         public int Groups { get; set; }

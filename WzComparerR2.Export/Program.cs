@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
@@ -78,27 +79,41 @@ namespace WzComparerR2.Export
                     source.Load(path, logger);
                 }
 
-                Wz_Node startNode = source.FindPrimaryNode(options.NodePath);
-                if (startNode == null)
+                List<ExportJob> jobs = ResolveJobs(source, options, logger);
+                if (jobs == null)
                 {
-                    string shown = string.IsNullOrEmpty(options.NodePath) ? "(wz 根)" : options.NodePath;
-                    logger.Error($"找不到节点：{shown}");
                     return ExitUsage;
                 }
 
-                string relativeRoot = ExportNaming.GetRelativeRoot(options.NodePath, source.PrimaryPath);
-                logger.Info($"导出根：{NodePathUtility.GetSymbolicPath(startNode)}  ->  {options.Kind}/{relativeRoot}");
+                string rootPath = jobs.Count == 1
+                    ? jobs[0].SymbolicPath
+                    : NodePathUtility.GetSymbolicPath(source.Root);
+
+                foreach (ExportJob job in jobs)
+                {
+                    logger.Info($"导出目标：{job.SymbolicPath}  ->  {options.Kind}/{job.RelativeRoot}");
+                }
 
                 if (options.Command == ExportCommand.List && options.ListDepth != null)
                 {
-                    new WzTreeLister(logger).List(startNode, options.ListDepth.Value);
+                    var treeLister = new WzTreeLister(logger);
+                    foreach (ExportJob job in jobs)
+                    {
+                        logger.Info($"== {job.SymbolicPath} ==");
+                        treeLister.List(job.Node, options.ListDepth.Value);
+                    }
                     return ExitOk;
                 }
 
                 if (options.Command == ExportCommand.List)
                 {
                     var listExporter = new UiImageExporter(source, options, logger);
-                    ExportManifest listManifest = listExporter.Export(startNode, relativeRoot, dryRun: true);
+                    foreach (ExportJob job in jobs)
+                    {
+                        listExporter.ExportTarget(job.Node, job.RelativeRoot, dryRun: true);
+                    }
+
+                    ExportManifest listManifest = listExporter.CreateManifest(rootPath);
                     logger.Info($"统计：{listManifest.Groups} 个分组，{listManifest.Frames} 帧（list 模式不写文件）");
                     return ExitOk;
                 }
@@ -106,8 +121,12 @@ namespace WzComparerR2.Export
                 PrepareOutputDirectory(options);
 
                 var exporter = new UiImageExporter(source, options, logger);
-                ExportManifest manifest = exporter.Export(startNode, relativeRoot, dryRun: false);
+                foreach (ExportJob job in jobs)
+                {
+                    exporter.ExportTarget(job.Node, job.RelativeRoot, dryRun: false);
+                }
 
+                ExportManifest manifest = exporter.CreateManifest(rootPath);
                 foreach (string warning in logger.Warnings)
                 {
                     manifest.Warnings.Add(warning);
@@ -121,12 +140,74 @@ namespace WzComparerR2.Export
                     return ExitOk;
                 }
 
-                return Verify(options, source, startNode, relativeRoot, manifest, exporter, logger);
+                return Verify(options, source, jobs, rootPath, manifest, exporter, logger);
             }
         }
 
-        private static int Verify(ExportOptions options, WzAssetSource source, Wz_Node startNode, string relativeRoot,
-            ExportManifest manifest, UiImageExporter exporter, ExportLogger logger)
+        /// <summary>
+        /// 把 --node / --list 解析成「节点 + 输出相对目录」的工作列表。
+        /// 单目标找不到节点算参数错误；批量清单里找不到的行只警告并跳过。
+        /// </summary>
+        private static List<ExportJob> ResolveJobs(WzAssetSource source, ExportOptions options, ExportLogger logger)
+        {
+            var jobs = new List<ExportJob>();
+
+            if (options.ListFiles.Count == 0)
+            {
+                Wz_Node node = source.FindPrimaryNode(options.NodePath);
+                if (node == null)
+                {
+                    string shown = string.IsNullOrEmpty(options.NodePath) ? "(wz 根)" : options.NodePath;
+                    logger.Error($"找不到节点：{shown}");
+                    return null;
+                }
+
+                jobs.Add(new ExportJob
+                {
+                    Node = node,
+                    RelativeRoot = ExportNaming.GetRelativeRoot(options.NodePath, source.PrimaryPath),
+                    SymbolicPath = NodePathUtility.GetSymbolicPath(node),
+                });
+                return jobs;
+            }
+
+            foreach (string listFile in options.ListFiles)
+            {
+                List<ExportTargetEntry> entries = ExportTargetList.Read(listFile, logger);
+                logger.Info($"{Path.GetFileName(listFile)}：{entries.Count} 个目标");
+
+                foreach (ExportTargetEntry entry in entries)
+                {
+                    Wz_Node node = source.FindPrimaryNode(entry.NodePath);
+                    if (node == null)
+                    {
+                        logger.Warn($"{Path.GetFileName(listFile)} 第 {entry.LineNumber} 行：找不到节点 {entry.NodePath}，已跳过");
+                        continue;
+                    }
+
+                    string relativeRoot = string.IsNullOrEmpty(entry.SubDirectory)
+                        ? ExportNaming.GetRelativeRoot(entry.NodePath, source.PrimaryPath)
+                        : ExportNaming.GetRelativeRoot(entry.SubDirectory, null);
+
+                    jobs.Add(new ExportJob
+                    {
+                        Node = node,
+                        RelativeRoot = relativeRoot,
+                        SymbolicPath = NodePathUtility.GetSymbolicPath(node),
+                    });
+                }
+            }
+
+            if (jobs.Count == 0)
+            {
+                logger.Error("批量清单里没有可导出的节点。");
+                return null;
+            }
+            return jobs;
+        }
+
+        private static int Verify(ExportOptions options, WzAssetSource source, IReadOnlyList<ExportJob> jobs,
+            string rootPath, ExportManifest manifest, UiImageExporter exporter, ExportLogger logger)
         {
             logger.Info("开始校验…");
 
@@ -144,8 +225,12 @@ namespace WzComparerR2.Export
                 Directory.CreateDirectory(verifyDir);
                 var quietLogger = new ExportLogger(quiet: true, verbose: false);
                 var verifyExporter = new UiImageExporter(source, options.CloneWithOutputDirectory(verifyDir), quietLogger);
-                ExportManifest second = verifyExporter.Export(startNode, relativeRoot, dryRun: false);
+                foreach (ExportJob job in jobs)
+                {
+                    verifyExporter.ExportTarget(job.Node, job.RelativeRoot, dryRun: false);
+                }
 
+                ExportManifest second = verifyExporter.CreateManifest(rootPath);
                 problems.AddRange(ExportVerifier.VerifyOutput(second, verifyExporter.Groups, verifyExporter.ContentRoot));
                 problems.AddRange(ExportVerifier.CompareTrees(options.OutputDirectory, verifyDir));
             }
@@ -214,6 +299,16 @@ namespace WzComparerR2.Export
                 version = assembly.GetName().Version?.ToString();
             }
             return version ?? "0.0.0";
+        }
+
+        /// <summary>一个导出目标：节点 + 输出相对目录 + 反查用符号路径。</summary>
+        private sealed class ExportJob
+        {
+            public Wz_Node Node { get; set; }
+
+            public string RelativeRoot { get; set; }
+
+            public string SymbolicPath { get; set; }
         }
     }
 }

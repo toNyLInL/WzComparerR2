@@ -20,6 +20,7 @@ WZ → 引擎无关中间格式（PNG + JSON）的**离线**导出器，产物�
 | `ExportOptions.cs` | 命令行解析与用法文本 |
 | `WzAssetSource.cs` | wz 加载（文件/文件夹/独立 `.img`）、节点定位、`_inlink`/`_outlink`/`UOL` 解析 |
 | `NodePathUtility.cs` | 节点符号路径（跨 img 边界）、链接属性读取 |
+| `ExportTargetList.cs` | `--list` 批量清单解析（`->` 子目录）与 `--skip` 通配符匹配 |
 | `UiImageExporter.cs` | 分组规则、帧元数据读取、PNG 落盘、meta/manifest 组装 |
 | `ExportNaming.cs` | 文件名清洗、Windows 保留名、路径长度保护、SHA-256 工具 |
 | `PngSaver.cs` | canvas → RGBA32 → PNG 字节；读回尺寸 |
@@ -58,6 +59,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\WzComparerR2.Export\verify
 - 第一条必须 **0 error 且 0 warning**（新工程没有历史警告）。
 - 第二条在没有 wz 样本时是唯一可自动化的端到端验证；改了分组/链接/命名/JSON 就必须跑它。
 - 有真实客户端时补一条人工路径：`wzexport list --wz UI.wz --node "UIWindow.img"` 的帧数要与 QuickView 一致。
+- 真实 v271 客户端的 `_Canvas` 是伴生子 wz：整包导出 UI 时用 `--skip _Canvas,WZ2Lua` 避免同一张图在
+  「引用处 + 伴生处」各写一遍；需要多张图时优先用 `--list` 批量清单定点导出。
 
 ## 6. 别做
 

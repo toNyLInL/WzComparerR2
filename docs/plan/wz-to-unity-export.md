@@ -241,6 +241,16 @@ wz-export/
 
 ## 11. 进展（按时间倒序）
 
+### 2026-10-23：M2 收尾 —— 批量清单 `--list` 与子树排除 `--skip`
+
+| 事项 | 结果 |
+| --- | --- |
+| 命令 | `ui` 新增 `--list <文件>`（每行一个节点路径，`-> 子目录` 改写输出位置，找不到的行只警告）与 `--skip <模式>`（逗号分隔、`*`/`?` 通配、大小写不敏感、可重复） |
+| 导出器 | 重构为累加式 `ExportTarget` + `CreateManifest`，多目标合并成一份 `manifest.json`；manifest 新增 `targets[]` |
+| 真实数据 | `UI -> Basic.img --skip Cursor`：800 组/2554 帧/6.33MB 变成 **639 组/2131 帧/0.79MB**（Cursor 单目录占 5.5MB）；`--list` 三项批量（含 `-> buttons` 重定向与一个故意写错的节点）0.5s 完成，`--verify` 通过 |
+| 回归 | `verify-ui-export.ps1` 新增 4 组用例：`_Canvas` 精确排除、逗号+通配符排除、批量清单（`->` 与缺失节点）、`--list`/`--node` 互斥 |
+| 仍未做 | 同内容 PNG 的 hash 去重与引用计数（§5.6）。当前用 `--skip _Canvas,WZ2Lua` 规避重复，属临时手段 |
+
 ### 2026-10-23：真实客户端（GMS v271 / Steam）实测
 
 数据目录 `G:\SteamLibrary\steamapps\common\MapleStory\Data`，16 个 wz 分组（Base / Character / Effect / Etc / Item / Map / Mob / Morph / Npc / Quest / Reactor / Skill / Sound / String / TamingMob / UI），

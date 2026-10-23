@@ -262,6 +262,14 @@ $fixtureRoot = @{
                 @{ name = '_outlink'; type = 'String'; value = 'Other.img/linked/0' }
             ) }
         ) }
+        # 模拟真实客户端 v271 的 _Canvas 伴生子树，用来测 --skip
+        @{ name = '_Canvas'; type = 'Property'; children = @(
+            @{ name = 'Extra'; type = 'Property'; children = @(
+                @{ name = '0'; type = 'Canvas'; width = 2; height = 2; seed = 400; props = @(
+                    @{ name = 'origin'; type = 'Vector'; x = 1; y = 0 }
+                ) }
+            ) }
+        ) }
     )
 }
 
@@ -344,7 +352,8 @@ $expectedFiles = @(
     'Basic\backgrnd\meta.json', 'Basic\backgrnd\0.png', 'Basic\backgrnd\1.png',
     'Ani\meta.json', 'Ani\0.png', 'Ani\1.png',
     'Links\meta.json', 'Links\link0.png', 'Links\uol.png', 'Links\a_b.png',
-    'Out\meta.json', 'Out\linked0.png'
+    'Out\meta.json', 'Out\linked0.png',
+    '_Canvas\Extra\meta.json', '_Canvas\Extra\0.png'   # _Canvas 自身没有直接 canvas 子节点，不产生分组
 )
 foreach ($relative in $expectedFiles) {
     Assert-File (Join-Path $uiRoot $relative) '导出结构不符'
@@ -439,10 +448,12 @@ if ($manifest) {
     Assert-Equal 'wzexport' $manifest.tool 'manifest.tool'
     Assert-Equal 'ui' $manifest.kind 'manifest.kind'
     Assert-Equal 'Fixture.img' $manifest.root 'manifest.root'
-    Assert-Equal 5 $manifest.counts.groups 'manifest.counts.groups'
-    Assert-Equal 9 $manifest.counts.frames 'manifest.counts.frames'
-    Assert-Equal 9 $manifest.counts.pngFiles 'manifest.counts.pngFiles'
-    Assert-Equal 5 $manifest.assets.Count 'manifest.assets 数量'
+    Assert-Equal 6 $manifest.counts.groups 'manifest.counts.groups'
+    Assert-Equal 10 $manifest.counts.frames 'manifest.counts.frames'
+    Assert-Equal 10 $manifest.counts.pngFiles 'manifest.counts.pngFiles'
+    Assert-Equal 6 $manifest.assets.Count 'manifest.assets 数量'
+    Assert-Equal 1 $manifest.targets.Count 'manifest.targets 数量（单目标）'
+    Assert-Equal 'Fixture.img' $manifest.targets[0] 'manifest.targets[0]'
     Assert-Equal 'Fixture.img' $manifest.files[0].file 'manifest.files[0].file'
     Assert-True ($manifest.toolVersion -match '^\d+\.\d+') 'manifest.toolVersion 应有版本号'
 }
@@ -474,8 +485,8 @@ Assert-Equal 104 $pixel[3] 'Ani/0.png 像素 B'
 # 10) list 模式
 $listResult = Invoke-Exporter @('list', '--wz', $fixturePath, '--wz', $otherPath)
 Assert-Equal 0 $listResult.ExitCode 'list 命令退出码'
-Assert-True ($listResult.Output -match '5 个分组') 'list 应统计到 5 个分组'
-Assert-True ($listResult.Output -match '9 帧') 'list 应统计到 9 帧'
+Assert-True ($listResult.Output -match '6 个分组') 'list 应统计到 6 个分组'
+Assert-True ($listResult.Output -match '10 帧') 'list 应统计到 10 帧'
 
 # 11) --node 下钻（目录）
 $aniOut = Join-Path $WorkDirectory 'out-ani'
@@ -505,6 +516,50 @@ Assert-True ($guardResult.Output -match '--force') '非空输出目录的提示�
 # 14) 节点不存在
 $missingResult = Invoke-Exporter @('ui', '--wz', $fixturePath, '--node', 'NoSuchNode', '--out', (Join-Path $WorkDirectory 'out-missing'))
 Assert-Equal 1 $missingResult.ExitCode '不存在的节点应返回 1'
+
+# 15) --skip 精确排除 _Canvas 子树
+$skipOut = Join-Path $WorkDirectory 'out-skip'
+$skipResult = Invoke-Exporter @('ui', '--wz', $fixturePath, '--wz', $otherPath, '--skip', '_Canvas', '--out', $skipOut, '--verify')
+Assert-Equal 0 $skipResult.ExitCode "--skip _Canvas 退出码（输出：$($skipResult.Output)）"
+Assert-True (-not (Test-Path (Join-Path $skipOut 'sprite\ui\Fixture\_Canvas'))) '--skip 应排除 _Canvas 子树'
+$skipManifest = Read-Json (Join-Path $skipOut 'manifest.json')
+if ($skipManifest) {
+    Assert-Equal 5 $skipManifest.counts.groups '--skip 后的分组数'
+    Assert-Equal 9 $skipManifest.counts.frames '--skip 后的帧数'
+}
+
+# 16) --skip 支持逗号分隔与通配符
+$skip2Out = Join-Path $WorkDirectory 'out-skip2'
+$skip2Result = Invoke-Exporter @('ui', '--wz', $fixturePath, '--wz', $otherPath, '--skip', '_Canvas,Ani', '--out', $skip2Out)
+Assert-Equal 0 $skip2Result.ExitCode '逗号分隔的 --skip 退出码'
+Assert-True (-not (Test-Path (Join-Path $skip2Out 'sprite\ui\Fixture\Ani'))) '--skip Ani 应排除 Ani 分组'
+$skip2Manifest = Read-Json (Join-Path $skip2Out 'manifest.json')
+if ($skip2Manifest) { Assert-Equal 4 $skip2Manifest.counts.groups '排除 _Canvas 与 Ani 后的分组数' }
+
+# 17) --list 批量清单（含 -> 子目录与找不到的节点）
+$listFile = Join-Path $WorkDirectory 'targets.txt'
+Set-Content -LiteralPath $listFile -Encoding UTF8 -Value @(
+    '# 批量清单测试',
+    'Ani',
+    'Basic/backgrnd -> buttons/ok',
+    'NoSuchNode'
+)
+$batchOut = Join-Path $WorkDirectory 'out-batch'
+$batchResult = Invoke-Exporter @('ui', '--wz', $fixturePath, '--wz', $otherPath, '--list', $listFile, '--out', $batchOut, '--verify')
+Assert-Equal 0 $batchResult.ExitCode "--list 批量导出退出码（输出：$($batchResult.Output)）"
+Assert-True ($batchResult.Output -match 'NoSuchNode') '批量清单里找不到的节点应给出警告'
+Assert-File (Join-Path $batchOut 'sprite\ui\Ani\meta.json') '--list 第一项应导出到 sprite/ui/Ani'
+Assert-File (Join-Path $batchOut 'sprite\ui\buttons\ok\meta.json') '--list 第二项应按 -> 导到 sprite/ui/buttons/ok'
+$batchManifest = Read-Json (Join-Path $batchOut 'manifest.json')
+if ($batchManifest) {
+    Assert-Equal 2 $batchManifest.counts.groups '批量清单分组数'
+    Assert-Equal 4 $batchManifest.counts.frames '批量清单帧数'
+    Assert-Equal 2 $batchManifest.targets.Count '批量清单 targets 数量'
+}
+
+# 18) --list 与 --node 互斥
+$conflictResult = Invoke-Exporter @('ui', '--wz', $fixturePath, '--list', $listFile, '--node', 'Ani', '--out', (Join-Path $WorkDirectory 'out-conflict'))
+Assert-Equal 1 $conflictResult.ExitCode '--list 与 --node 同时使用应返回 1'
 
 # ---------------------------------------------------------------- 结果
 

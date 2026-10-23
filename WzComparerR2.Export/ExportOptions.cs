@@ -32,6 +32,8 @@ namespace WzComparerR2.Export
     /// </summary>
     internal sealed class ExportOptions
     {
+        private readonly List<string> rawSkipPatterns = new List<string>();
+
         private ExportOptions()
         {
             this.NodePath = string.Empty;
@@ -45,6 +47,12 @@ namespace WzComparerR2.Export
 
         /// <summary>起始节点路径（'/' 或 '\' 分隔），空表示整个 wz。</summary>
         public string NodePath { get; private set; }
+
+        /// <summary>批量清单文件（--list），每行一个节点路径。</summary>
+        public List<string> ListFiles { get; } = new List<string>();
+
+        /// <summary>要跳过的节点子树通配符（--skip），由 Validate 从原始值切出来。</summary>
+        public List<string> SkipPatterns { get; } = new List<string>();
 
         /// <summary>输出目录，list 命令可为空。</summary>
         public string OutputDirectory { get; private set; }
@@ -103,6 +111,14 @@ namespace WzComparerR2.Export
 
                     case "--node":
                         options.NodePath = NormalizeNodePath(RequireValue(args, ref i, arg));
+                        break;
+
+                    case "--list":
+                        options.ListFiles.Add(RequireValue(args, ref i, arg));
+                        break;
+
+                    case "--skip":
+                        options.rawSkipPatterns.Add(RequireValue(args, ref i, arg));
                         break;
 
                     case "--out":
@@ -169,6 +185,9 @@ namespace WzComparerR2.Export
                 "  --wz <路径>   wz 文件、wz 文件夹（含 _000 分卷）或独立 .img 文件。可重复：",
                 "                第一个是导出根，其余只用于解析 _outlink/source 跨文件引用。",
                 "  --node <路径> 起始节点，'/' 或 '\\' 分隔，例如 \"UIWindow.img/Main\"；缺省为整个 wz。",
+                "  --list <文件> 批量清单：每行一个节点路径（# 注释），可用 \"-> 子目录\" 改写输出位置；",
+                "                与 --node 互斥，可重复。",
+                "  --skip <模式> 跳过匹配的节点子树（逗号分隔，支持 * 和 ?，大小写不敏感），可重复。",
                 "  --out <目录>  输出目录。已存在且非空时必须加 --force。",
                 "  --kind <名字> 产物分类名，默认 ui（决定 sprite/ui/ 与 manifest.kind）。",
                 "  --depth <n>   list 专用：只展开到第 n 层（0=只看起点），逐节点打印类型/尺寸。",
@@ -254,6 +273,30 @@ namespace WzComparerR2.Export
             if (string.IsNullOrWhiteSpace(this.Kind) || this.Kind.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
             {
                 throw new UsageException($"非法的 --kind 值：{this.Kind}");
+            }
+
+            if (this.ListFiles.Count > 0 && !string.IsNullOrEmpty(this.NodePath))
+            {
+                throw new UsageException("--list 与 --node 只能二选一。");
+            }
+
+            if (this.rawSkipPatterns.Count > 0)
+            {
+                this.SkipPatterns.AddRange(ExportTargetList.SplitPatterns(this.rawSkipPatterns));
+                if (this.SkipPatterns.Count == 0)
+                {
+                    throw new UsageException("--skip 的模式为空。");
+                }
+            }
+
+            for (int i = 0; i < this.ListFiles.Count; i++)
+            {
+                string listFile = this.ListFiles[i];
+                if (!File.Exists(listFile))
+                {
+                    throw new UsageException($"找不到批量清单文件：{listFile}");
+                }
+                this.ListFiles[i] = Path.GetFullPath(listFile);
             }
 
             if (this.ListDepth != null && this.Command != ExportCommand.List)

@@ -25,6 +25,7 @@ namespace WzComparerR2.Export
         private readonly HashSet<string> usedDirectories;
         private readonly List<ManifestAsset> assets;
         private readonly List<MetaGroup> groups;
+        private readonly List<string> targetPaths;
 
         private bool dryRun;
         private int groupCount;
@@ -43,10 +44,14 @@ namespace WzComparerR2.Export
             this.usedDirectories = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             this.assets = new List<ManifestAsset>();
             this.groups = new List<MetaGroup>();
+            this.targetPaths = new List<string>();
         }
 
         /// <summary>本次导出的全部分组（--verify 用它做逐帧断言）。</summary>
         public IReadOnlyList<MetaGroup> Groups => this.groups;
+
+        /// <summary>已导出的目标节点符号路径（--list 批量时会多于一个）。</summary>
+        public IReadOnlyList<string> TargetPaths => this.targetPaths;
 
         /// <summary>产物根：&lt;out&gt;/sprite/&lt;kind&gt;。</summary>
         public string ContentRoot => this.contentRoot;
@@ -54,15 +59,16 @@ namespace WzComparerR2.Export
         /// <summary>manifest 里用的相对前缀（'/' 分隔）。</summary>
         private string SpritePrefix => "sprite/" + this.options.Kind + "/";
 
-        public ExportManifest Export(Wz_Node startNode, string relativeRoot, bool dryRun)
+        /// <summary>
+        /// 导出一个目标节点（可以是整个 wz、一个目录或单张 canvas）。可以多次调用，
+        /// 结果累加在同一个 manifest 里，供 --list 批量清单使用。
+        /// </summary>
+        public void ExportTarget(Wz_Node startNode, string relativeRoot, bool dryRun)
         {
             this.dryRun = dryRun;
-            this.groupCount = 0;
-            this.frameCount = 0;
-            this.pngFileCount = 0;
-            this.longDelayFrameCount = 0;
+            this.targetPaths.Add(NodePathUtility.GetSymbolicPath(startNode));
 
-            // img 节点只有解压之后才有子节点，先展开导出根；解压失败就只产出空 manifest。
+            // img 节点只有解压之后才有子节点，先展开导出根；解压失败就跳过这个目标。
             bool extracted = this.EnsureExtracted(startNode, out Wz_Node startContent);
 
             var startLink = new WzCanvasLink();
@@ -84,14 +90,18 @@ namespace WzComparerR2.Export
             {
                 this.Walk(startContent, relativeRoot);
             }
+        }
 
+        /// <summary>把累加的结果组装成 manifest。</summary>
+        public ExportManifest CreateManifest(string rootPath)
+        {
             var manifest = new ExportManifest
             {
                 Schema = JsonExportWriter.SchemaVersion,
                 ToolVersion = Program.ToolVersion,
                 GeneratedAtUtc = DateTime.UtcNow,
                 Kind = this.options.Kind,
-                Root = NodePathUtility.GetSymbolicPath(startNode),
+                Root = rootPath,
                 Groups = this.groupCount,
                 Frames = this.frameCount,
                 PngFiles = this.pngFileCount,
@@ -102,6 +112,7 @@ namespace WzComparerR2.Export
                 manifest.Files.Add(new WzFileInfo { File = name, Version = this.source.WzVersion });
             }
             manifest.Assets.AddRange(this.assets);
+            manifest.Targets.AddRange(this.targetPaths);
 
             if (this.longDelayFrameCount > 0)
             {
@@ -132,6 +143,12 @@ namespace WzComparerR2.Export
                 if (IsFrameNode(frames, child))
                 {
                     // 已经是上一层的帧，不再当作目录下钻。
+                    continue;
+                }
+
+                if (ExportTargetList.Match(child.Text, this.options.SkipPatterns))
+                {
+                    this.logger.Detail($"跳过 {CombinePath(relativeDir, child.Text)}（--skip）");
                     continue;
                 }
 
@@ -173,6 +190,11 @@ namespace WzComparerR2.Export
             {
                 // 目录节点没有 Value；带 _inlink/_outlink 的“空节点”也可能是帧，交给解析器判断。
                 if (child.Value == null && NodePathUtility.GetLinkPath(child) == null)
+                {
+                    continue;
+                }
+
+                if (ExportTargetList.Match(child.Text, this.options.SkipPatterns))
                 {
                     continue;
                 }
