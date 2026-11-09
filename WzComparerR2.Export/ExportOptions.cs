@@ -17,6 +17,9 @@ namespace WzComparerR2.Export
 
         /// <summary>只校验已经导出的产物，不读 wz、不重新导出。</summary>
         Verify = 2,
+
+        /// <summary>把指定节点下的 &lt;Wz_Sound&gt; 导出为 mp3/wav/bin + audio.json + manifest.json。</summary>
+        Audio = 3,
     }
 
     /// <summary>
@@ -60,8 +63,11 @@ namespace WzComparerR2.Export
         /// <summary>输出目录，list 命令可为空。</summary>
         public string OutputDirectory { get; private set; }
 
-        /// <summary>产物分类名，落到 sprite/&lt;kind&gt;/ 与 manifest.kind。</summary>
+        /// <summary>产物分类名，落到 sprite/&lt;kind&gt;/ 与 manifest.kind；audio 命令默认 sound。</summary>
         public string Kind { get; private set; }
+
+        /// <summary>--kind 是否用了默认值（audio 命令要在校验后把它换成 sound）。</summary>
+        public bool DefaultKind { get; private set; } = true;
 
         public bool Force { get; private set; }
 
@@ -78,6 +84,12 @@ namespace WzComparerR2.Export
 
         /// <summary>list 命令的树深度上限；为空时按导出口径统计分组。</summary>
         public int? ListDepth { get; private set; }
+
+        /// <summary>单个音频的数据上限（字节），超过只警告并跳过。</summary>
+        public int MaxAudioBytes { get; private set; } = DefaultMaxAudioBytes;
+
+        /// <summary>默认 64MB：v271 实测最大单曲约 6MB，这个上限只用来防单条异常数据把内存吃满。</summary>
+        public const int DefaultMaxAudioBytes = 64 * 1024 * 1024;
 
         public static ExportOptions Parse(string[] args)
         {
@@ -133,10 +145,15 @@ namespace WzComparerR2.Export
 
                     case "--kind":
                         options.Kind = RequireValue(args, ref i, arg);
+                        options.DefaultKind = false;
                         break;
 
                     case "--depth":
                         options.ListDepth = ParseDepth(RequireValue(args, ref i, arg));
+                        break;
+
+                    case "--max-audio-bytes":
+                        options.MaxAudioBytes = ParseByteCount(RequireValue(args, ref i, arg));
                         break;
 
                     case "--force":
@@ -182,14 +199,17 @@ namespace WzComparerR2.Export
                 "wzexport — WZ 资源离线导出器（引擎无关中间格式）",
                 "",
                 "用法：",
-                "  wzexport ui   --wz <路径> [--wz <路径>...] [--node <节点路径>] --out <目录> [选项]",
-                "  wzexport list --wz <路径> [--wz <路径>...] [--node <节点路径>] [选项]",
+                "  wzexport ui    --wz <路径> [--wz <路径>...] [--node <节点路径>] --out <目录> [选项]",
+                "  wzexport audio --wz <路径> [--wz <路径>...] [--node <节点路径>] --out <目录> [选项]",
+                "  wzexport list  --wz <路径> [--wz <路径>...] [--node <节点路径>] [选项]",
                 "",
                 "命令：",
                 "  ui     把节点下的 canvas 导出为 <out>/sprite/<kind>/<相对路径>/{<帧>.png, meta.json}，",
                 "         并写 <out>/manifest.json。省略命令时默认执行 ui。",
-                "  list   只打印将要导出的分组、帧数与尺寸，不写文件；用于导出前核对。",
-                "  verify 只校验已经导出的目录（读 manifest.json + meta.json + PNG 头），不读 wz、不重导。",
+                "  audio  把节点下的 <Wz_Sound> 导出为 <out>/audio/<kind>/<相对路径>/{<音频>.<mp3|wav|bin>, audio.json}；",
+                "         主 manifest 是纯音频清单（audioOnly）。",
+                "  list   只打印将要导出的分组、帧数/音频数与尺寸，不写文件；用于导出前核对。",
+                "  verify 只校验已经导出的目录（读 manifest.json + meta.json/audio.json + PNG 头），不读 wz、不重导。",
                 "         加 --depth <n> 则改为打印节点树（只看结构，不导出）。",
                 "",
                 "选项：",
@@ -202,6 +222,7 @@ namespace WzComparerR2.Export
                 "  --out <目录>  输出目录。已存在且非空时必须加 --force。",
                 "  --kind <名字> 产物分类名，默认 ui（决定 sprite/ui/ 与 manifest.kind）。",
                 "  --depth <n>   list 专用：只展开到第 n 层（0=只看起点），逐节点打印类型/尺寸。",
+                "  --max-audio-bytes <n>  audio 专用：单条音频的数据上限（字节），默认 67108864。",
                 "  --force       允许写入非空输出目录。",
                 "  --verify      导出后再跑一遍断言：PNG 可重新打开且尺寸与 meta 一致、帧数一致、",
                 "                z/delay 在合法区间、二次导出逐字节一致。",
@@ -212,6 +233,7 @@ namespace WzComparerR2.Export
                 "",
                 "示例：",
                 "  wzexport ui --wz \"D:\\Maple\\UI.wz\" --node \"UIWindow.img\" --out D:\\export\\ui",
+                "  wzexport audio --wz \"D:\\Maple\\Sound\" --node \"Bgm00.img\" --out D:\\export\\sound",
                 "  wzexport list --wz \"D:\\Maple\\UI.wz\" --node \"UIWindow.img/Main\"",
                 "",
                 "退出码：0 成功；1 参数错误；2 导出失败；3 --verify 断言失败。",
@@ -224,13 +246,24 @@ namespace WzComparerR2.Export
             {
                 case "ui":
                     return ExportCommand.Ui;
+                case "audio":
+                    return ExportCommand.Audio;
                 case "list":
                     return ExportCommand.List;
                 case "verify":
                     return ExportCommand.Verify;
                 default:
-                    throw new UsageException($"无法识别的命令：{arg}（可用：ui、list、verify）");
+                    throw new UsageException($"无法识别的命令：{arg}（可用：ui、audio、list、verify）");
             }
+        }
+
+        private static int ParseByteCount(string value)
+        {
+            if (!long.TryParse(value, out long bytes) || bytes <= 0 || bytes > int.MaxValue)
+            {
+                throw new UsageException($"--max-audio-bytes 只接受 1~{int.MaxValue} 的整数：{value}");
+            }
+            return (int)bytes;
         }
 
         private static int ParseDepth(string value)
@@ -362,6 +395,22 @@ namespace WzComparerR2.Export
             else if (!string.IsNullOrWhiteSpace(this.OutputDirectory))
             {
                 this.OutputDirectory = Path.GetFullPath(this.OutputDirectory);
+            }
+
+            if (this.Command == ExportCommand.Audio)
+            {
+                if (string.IsNullOrWhiteSpace(this.OutputDirectory))
+                {
+                    throw new UsageException("audio 命令必须用 --out 指定输出目录。");
+                }
+                if (this.DefaultKind)
+                {
+                    this.Kind = "sound";
+                }
+            }
+            if (this.Verbose)
+            {
+                this.Quiet = false;
             }
         }
     }

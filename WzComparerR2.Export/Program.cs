@@ -124,10 +124,47 @@ namespace WzComparerR2.Export
 
                     ExportManifest listManifest = listExporter.CreateManifest(rootPath);
                     logger.Info($"统计：{listManifest.Groups} 个分组，{listManifest.Frames} 帧（list 模式不写文件）");
+
+                    var listAudio = new AudioExporter(source, options, logger);
+                    foreach (ExportJob job in jobs)
+                    {
+                        listAudio.ExportTarget(job.Node, job.RelativeRoot, dryRun: true);
+                    }
+
+                    listAudio.FlushAbsoluteUolCandidates();
+                    ExportManifest listAudioManifest = listAudio.CreateManifest(rootPath);
+                    logger.Info($"音频统计：{listAudioManifest.AudioGroups} 个分组，{listAudioManifest.AudioFiles} 个音频，" +
+                        $"{FormatBytes(listAudioManifest.AudioBytes)}（list 模式不写文件）");
                     return ExitOk;
                 }
 
                 PrepareOutputDirectory(options);
+
+                if (options.Command == ExportCommand.Audio)
+                {
+                    var audioExporter = new AudioExporter(source, options, logger);
+                    foreach (ExportJob job in jobs)
+                    {
+                        audioExporter.ExportTarget(job.Node, job.RelativeRoot, dryRun: false);
+                    }
+
+                    audioExporter.FlushAbsoluteUolCandidates();
+                    ExportManifest audioManifest = audioExporter.CreateManifest(rootPath);
+                    audioManifest.AudioOnly = true;
+                    AddWarnings(logger, audioManifest);
+
+                    string manifestPath = audioExporter.GetManifestPath(options.OutputDirectory);
+                    WriteManifestFile(manifestPath, audioManifest);
+                    logger.Info($"导出完成：{audioManifest.AudioGroups} 个音频分组，{audioManifest.AudioFiles} 个音频，" +
+                        $"{FormatBytes(audioManifest.AudioBytes)}  ->  {options.OutputDirectory}（清单 {Path.GetFileName(manifestPath)}）");
+
+                    if (!options.Verify)
+                    {
+                        return ExitOk;
+                    }
+
+                    return Verify(options, source, jobs, rootPath, audioManifest, null, audioExporter, logger);
+                }
 
                 var exporter = new UiImageExporter(source, options, logger);
                 foreach (ExportJob job in jobs)
@@ -136,10 +173,7 @@ namespace WzComparerR2.Export
                 }
 
                 ExportManifest manifest = exporter.CreateManifest(rootPath);
-                foreach (string warning in logger.Warnings)
-                {
-                    manifest.Warnings.Add(warning);
-                }
+                AddWarnings(logger, manifest);
 
                 WriteManifest(options.OutputDirectory, manifest);
                 logger.Info($"导出完成：{manifest.Groups} 个分组，{manifest.Frames} 帧  ->  {options.OutputDirectory}");
@@ -149,8 +183,42 @@ namespace WzComparerR2.Export
                     return ExitOk;
                 }
 
-                return Verify(options, source, jobs, rootPath, manifest, exporter, logger);
+                return Verify(options, source, jobs, rootPath, manifest, exporter, null, logger);
             }
+        }
+
+        private static void AddWarnings(ExportLogger logger, ExportManifest manifest)
+        {
+            foreach (string warning in logger.Warnings)
+            {
+                manifest.Warnings.Add(warning);
+            }
+        }
+
+        /// <summary>--verify 做二次导出比对时要跳过的清单文件（含时间戳 / 由另一种分类负责）。</summary>
+        private static readonly string[] IgnoredManifestNames = { "manifest.json", "audio/manifest.json" };
+
+        private static int CountAudioFiles(IReadOnlyList<AudioGroup> groups)
+        {
+            int count = 0;
+            foreach (AudioGroup group in groups)
+            {
+                count += group.Entries.Count;
+            }
+            return count;
+        }
+
+        private static string FormatBytes(int bytes)
+        {
+            if (bytes >= 1024 * 1024)
+            {
+                return (bytes / (1024.0 * 1024.0)).ToString("0.0") + "MB";
+            }
+            if (bytes >= 1024)
+            {
+                return (bytes / 1024.0).ToString("0.0") + "KB";
+            }
+            return bytes + "B";
         }
 
         /// <summary>
@@ -216,11 +284,19 @@ namespace WzComparerR2.Export
         }
 
         private static int Verify(ExportOptions options, WzAssetSource source, IReadOnlyList<ExportJob> jobs,
-            string rootPath, ExportManifest manifest, UiImageExporter exporter, ExportLogger logger)
+            string rootPath, ExportManifest manifest, UiImageExporter exporter, AudioExporter audioExporter, ExportLogger logger)
         {
             logger.Info("开始校验…");
 
-            var problems = ExportVerifier.VerifyOutput(manifest, exporter.Groups, exporter.ContentRoot);
+            var problems = new List<string>();
+            if (exporter != null)
+            {
+                problems.AddRange(ExportVerifier.VerifyOutput(manifest, exporter.Groups, exporter.ContentRoot));
+            }
+            if (audioExporter != null)
+            {
+                problems.AddRange(ExportVerifier.VerifyAudioOutput(manifest, audioExporter.Groups, audioExporter.ContentRoot));
+            }
 
             // 字节稳定性：同一输入再导出一份到临时目录，逐文件比对。
             string verifyDir = options.OutputDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + ".verify";
@@ -233,15 +309,39 @@ namespace WzComparerR2.Export
             {
                 Directory.CreateDirectory(verifyDir);
                 var quietLogger = new ExportLogger(quiet: true, verbose: false);
-                var verifyExporter = new UiImageExporter(source, options.CloneWithOutputDirectory(verifyDir), quietLogger);
-                foreach (ExportJob job in jobs)
+                ExportOptions cloneOptions = options.CloneWithOutputDirectory(verifyDir);
+                var sharedDirectories = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+                UiImageExporter verifyExporter = null;
+                if (exporter != null)
                 {
-                    verifyExporter.ExportTarget(job.Node, job.RelativeRoot, dryRun: false);
+                    verifyExporter = new UiImageExporter(source, cloneOptions, quietLogger, sharedDirectories);
+                }
+                AudioExporter verifyAudio = null;
+                if (audioExporter != null)
+                {
+                    verifyAudio = new AudioExporter(source, cloneOptions, quietLogger, sharedDirectories);
                 }
 
-                ExportManifest second = verifyExporter.CreateManifest(rootPath);
-                problems.AddRange(ExportVerifier.VerifyOutput(second, verifyExporter.Groups, verifyExporter.ContentRoot));
-                problems.AddRange(ExportVerifier.CompareTrees(options.OutputDirectory, verifyDir));
+                foreach (ExportJob job in jobs)
+                {
+                    verifyExporter?.ExportTarget(job.Node, job.RelativeRoot, dryRun: false);
+                    verifyAudio?.ExportTarget(job.Node, job.RelativeRoot, dryRun: false);
+                }
+
+                if (verifyExporter != null)
+                {
+                    ExportManifest second = verifyExporter.CreateManifest(rootPath);
+                    problems.AddRange(ExportVerifier.VerifyOutput(second, verifyExporter.Groups, verifyExporter.ContentRoot));
+                }
+                if (verifyAudio != null)
+                {
+                    ExportManifest secondAudio = verifyAudio.CreateManifest(rootPath);
+                    secondAudio.AudioOnly = true;
+                    problems.AddRange(ExportVerifier.VerifyAudioOutput(secondAudio, verifyAudio.Groups, verifyAudio.ContentRoot));
+                }
+
+                problems.AddRange(ExportVerifier.CompareTrees(options.OutputDirectory, verifyDir, IgnoredManifestNames));
             }
             finally
             {
@@ -260,7 +360,17 @@ namespace WzComparerR2.Export
 
             if (problems.Count == 0)
             {
-                logger.Info($"校验通过：{manifest.Groups} 个分组 / {manifest.Frames} 帧，二次导出逐字节一致。");
+                var parts = new List<string>();
+                if (exporter != null)
+                {
+                    parts.Add($"{manifest.Groups} 个分组 / {manifest.Frames} 帧");
+                }
+                if (audioExporter != null)
+                {
+                    parts.Add($"音频 {audioExporter.Groups.Count} 组 / {CountAudioFiles(audioExporter.Groups)} 个");
+                }
+
+                logger.Info($"校验通过：{string.Join("；", parts)}，二次导出逐字节一致。");
                 return ExitOk;
             }
 
@@ -289,9 +399,20 @@ namespace WzComparerR2.Export
             }
         }
 
+        /// <summary>写 &lt;outputDirectory&gt;/manifest.json。</summary>
         private static void WriteManifest(string outputDirectory, ExportManifest manifest)
         {
-            string path = Path.Combine(outputDirectory, "manifest.json");
+            WriteManifestFile(Path.Combine(outputDirectory, "manifest.json"), manifest);
+        }
+
+        /// <summary>写指定位置的清单文件（音频清单可能落到 &lt;out&gt;/audio/manifest.json）。</summary>
+        private static void WriteManifestFile(string path, ExportManifest manifest)
+        {
+            string directory = Path.GetDirectoryName(path);
+            if (!string.IsNullOrEmpty(directory))
+            {
+                Directory.CreateDirectory(directory);
+            }
             File.WriteAllText(path, JsonExportWriter.WriteManifest(manifest), new UTF8Encoding(false));
         }
 

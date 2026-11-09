@@ -71,6 +71,11 @@ namespace WzComparerR2.Export
             writer.Value(manifest.GeneratedAtUtc.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture));
             writer.Name("kind");
             writer.Value(manifest.Kind);
+            if (manifest.AudioOnly)
+            {
+                writer.Name("audioOnly");
+                writer.Value(true);
+            }
             writer.Name("root");
             writer.Value(manifest.Root);
 
@@ -104,36 +109,71 @@ namespace WzComparerR2.Export
             writer.Value(manifest.Groups);
             writer.Name("frames");
             writer.Value(manifest.Frames);
-            writer.Name("pngFiles");
-            writer.Value(manifest.PngFiles);
+            if (!manifest.AudioOnly)
+            {
+                writer.Name("pngFiles");
+                writer.Value(manifest.PngFiles);
+            }
+            if (manifest.HasAudio)
+            {
+                writer.Name("audioGroups");
+                writer.Value(manifest.AudioGroups);
+                writer.Name("audioFiles");
+                writer.Value(manifest.AudioFiles);
+                writer.Name("audioBytes");
+                writer.Value(manifest.AudioBytes);
+            }
             writer.EndObject();
 
-            writer.Name("assets");
+            writer.Name(manifest.AudioOnly ? "audio" : "assets");
             writer.StartArray();
-            foreach (ManifestAsset asset in manifest.Assets)
+            if (manifest.AudioOnly)
             {
-                writer.StartObject();
-                writer.Name("source");
-                writer.Value(asset.Source);
-                writer.Name("dir");
-                writer.Value(asset.Dir);
-                writer.Name("meta");
-                writer.Value(asset.Meta);
-                writer.Name("frames");
-                writer.Value(asset.Frames);
-                if (asset.Width != null)
+                foreach (ManifestAudio audio in manifest.Audio)
                 {
-                    writer.Name("width");
-                    writer.Value(asset.Width.Value);
+                    writer.StartObject();
+                    writer.Name("source");
+                    writer.Value(audio.Source);
+                    writer.Name("dir");
+                    writer.Value(audio.Dir);
+                    writer.Name("meta");
+                    writer.Value(audio.Meta);
+                    writer.Name("files");
+                    writer.Value(audio.Files);
+                    writer.Name("bytes");
+                    writer.Value(audio.Bytes);
+                    writer.Name("hash");
+                    writer.Value(audio.Hash);
+                    writer.EndObject();
                 }
-                if (asset.Height != null)
+            }
+            else
+            {
+                foreach (ManifestAsset asset in manifest.Assets)
                 {
-                    writer.Name("height");
-                    writer.Value(asset.Height.Value);
+                    writer.StartObject();
+                    writer.Name("source");
+                    writer.Value(asset.Source);
+                    writer.Name("dir");
+                    writer.Value(asset.Dir);
+                    writer.Name("meta");
+                    writer.Value(asset.Meta);
+                    writer.Name("frames");
+                    writer.Value(asset.Frames);
+                    if (asset.Width != null)
+                    {
+                        writer.Name("width");
+                        writer.Value(asset.Width.Value);
+                    }
+                    if (asset.Height != null)
+                    {
+                        writer.Name("height");
+                        writer.Value(asset.Height.Value);
+                    }
+                    writer.Name("hash");
+                    writer.Value(asset.Hash);
+                    writer.EndObject();
                 }
-                writer.Name("hash");
-                writer.Value(asset.Hash);
-                writer.EndObject();
             }
             writer.EndArray();
 
@@ -150,6 +190,99 @@ namespace WzComparerR2.Export
 
             writer.EndObject();
             return writer.ToString();
+        }
+
+        /// <summary>audio.json：结构见 docs/plan/spec/wz-export-schema.md §9.3。</summary>
+        public static string WriteAudio(AudioGroup group)
+        {
+            var writer = new JsonTextWriter();
+
+            writer.StartObject();
+            writer.Name("schema");
+            writer.Value(SchemaVersion);
+            writer.Name("kind");
+            writer.Value(group.Kind);
+            writer.Name("source");
+            writer.Value(group.Source);
+
+            writer.Name("entries");
+            writer.StartArray();
+            foreach (AudioEntry entry in group.Entries)
+            {
+                WriteAudioEntry(writer, entry);
+            }
+            writer.EndArray();
+
+            writer.EndObject();
+            return writer.ToString();
+        }
+
+        private static void WriteAudioEntry(JsonTextWriter writer, AudioEntry entry)
+        {
+            writer.StartObject();
+
+            writer.Name("index");
+            writer.Value(entry.Index);
+            writer.Name("name");
+            writer.Value(entry.Name);
+            writer.Name("file");
+            writer.Value(entry.File);
+            writer.Name("format");
+            writer.Value(entry.Format);
+            if (!string.IsNullOrEmpty(entry.Codec))
+            {
+                writer.Name("codec");
+                writer.Value(entry.Codec);
+            }
+            if (entry.Channels != null)
+            {
+                writer.Name("channels");
+                writer.Value(entry.Channels.Value);
+            }
+            if (entry.SampleRate != null)
+            {
+                writer.Name("sampleRate");
+                writer.Value(entry.SampleRate.Value);
+            }
+            if (entry.BitsPerSample != null)
+            {
+                writer.Name("bitsPerSample");
+                writer.Value(entry.BitsPerSample.Value);
+            }
+            if (entry.BlockAlign != null)
+            {
+                writer.Name("blockAlign");
+                writer.Value(entry.BlockAlign.Value);
+            }
+
+            writer.Name("duration");
+            writer.Value(entry.Duration);
+            writer.Name("bytes");
+            writer.Value(entry.Bytes);
+            writer.Name("sha256");
+            writer.Value(entry.Sha256);
+            writer.Name("source");
+            writer.Value(entry.Source);
+
+            if (!string.IsNullOrEmpty(entry.Uol))
+            {
+                writer.Name("uol");
+                writer.Value(entry.Uol);
+            }
+            if (!string.IsNullOrEmpty(entry.Link))
+            {
+                writer.Name("link");
+                writer.Value(entry.Link);
+                writer.Name("inlink");
+                writer.Value(entry.Inlink);
+            }
+            if (!string.IsNullOrEmpty(entry.LinkError))
+            {
+                writer.Name("linkError");
+                writer.Value(entry.LinkError);
+            }
+
+            writer.EndObject();
         }
 
         private static void WriteFrame(JsonTextWriter writer, MetaFrame frame)

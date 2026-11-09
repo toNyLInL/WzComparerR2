@@ -33,6 +33,10 @@ namespace WzComparerR2.Export
         private int frameCount;
         private int deepChecked;
 
+        private int audioGroupCount;
+        private int audioFileCount;
+        private int audioBytes;
+
         public ExistingOutputVerifier(string outputDirectory, ExportLogger logger, bool deep)
         {
             this.outputDirectory = outputDirectory;
@@ -75,19 +79,202 @@ namespace WzComparerR2.Export
             }
 
             IReadOnlyList<JsonNode> assets = manifest.GetArray("assets");
+            IReadOnlyList<JsonNode> audio = manifest.GetArray("audio");
+            bool audioOnly = manifest.GetBool("audioOnly") == true || (assets.Count == 0 && audio.Count > 0);
+
             this.logger.Info($"校验 {this.outputDirectory}");
-            this.logger.Info($"  manifest: schema={schema} kind={manifest.GetString("kind")} root={manifest.GetString("root")} assets={assets.Count}");
+            this.logger.Info($"  manifest: schema={schema} kind={manifest.GetString("kind")} root={manifest.GetString("root")} " +
+                $"assets={assets.Count} audio={audio.Count}");
 
             // 校验是纯读盘：按资产并行（默认 8 线程，或 CPU 数），大包上能快数倍。
             int parallelism = Math.Min(8, Math.Max(1, Environment.ProcessorCount));
             Parallel.ForEach(assets, new ParallelOptions { MaxDegreeOfParallelism = parallelism }, this.VerifyAsset);
+            if (audio.Count > 0)
+            {
+                Parallel.ForEach(audio, new ParallelOptions { MaxDegreeOfParallelism = parallelism }, this.VerifyAudioAsset);
+            }
 
             this.CheckCounts(manifest, "groups", this.groupCount, "分组");
             this.CheckCounts(manifest, "frames", this.frameCount, "帧");
-            this.CheckCounts(manifest, "pngFiles", this.frameCount, "PNG");
+            if (!audioOnly)
+            {
+                this.CheckCounts(manifest, "pngFiles", this.frameCount, "PNG");
+            }
+            if (audio.Count > 0)
+            {
+                this.CheckCounts(manifest, "audioGroups", this.audioGroupCount, "音频分组");
+                this.CheckCounts(manifest, "audioFiles", this.audioFileCount, "音频文件");
+                this.CheckCounts(manifest, "audioBytes", this.audioBytes, "音频字节");
+            }
+
+            // 合并导出时音频清单另存一份（spec §2）：存在就一并校验。
+            string sideManifest = Path.Combine(this.outputDirectory, "audio", "manifest.json");
+            if (File.Exists(sideManifest))
+            {
+                this.VerifySideAudioManifest(sideManifest);
+            }
 
             stopwatch.Stop();
             return this.Report(stopwatch.Elapsed);
+        }
+
+        private void VerifySideAudioManifest(string path)
+        {
+            JsonNode manifest;
+            try
+            {
+                manifest = JsonReader.Parse(File.ReadAllText(path, Encoding.UTF8));
+            }
+            catch (Exception ex)
+            {
+                this.AddProblem($"audio/manifest.json 解析失败：{NodePathUtility.Describe(ex)}");
+                return;
+            }
+
+            IReadOnlyList<JsonNode> audio = manifest.GetArray("audio");
+            this.logger.Info($"  音频清单: {Path.GetFileName(path)} audio={audio.Count}");
+
+            int parallelism = Math.Min(8, Math.Max(1, Environment.ProcessorCount));
+            Parallel.ForEach(audio, new ParallelOptions { MaxDegreeOfParallelism = parallelism }, this.VerifyAudioAsset);
+            this.CheckCounts(manifest, "audioGroups", this.audioGroupCount, "音频分组");
+            this.CheckCounts(manifest, "audioFiles", this.audioFileCount, "音频文件");
+            this.CheckCounts(manifest, "audioBytes", this.audioBytes, "音频字节");
+        }
+
+        /// <summary>
+        /// 校验一份 audio.json 及其音频文件（spec §9.5）：hash 与 manifest 一致、文件大小与内容 SHA-256 对得上、
+        /// 容器签名可识别、字段区间合法。
+        /// </summary>
+        private void VerifyAudioAsset(JsonNode asset)
+        {
+            string metaRelative = asset.GetString("meta");
+            string source = asset.GetString("source");
+            string shown = string.IsNullOrEmpty(source) ? metaRelative : source;
+
+            if (string.IsNullOrEmpty(metaRelative))
+            {
+                this.AddProblem($"manifest 音频条目缺少 meta 字段：{shown}");
+                return;
+            }
+
+            string metaPath = this.ResolvePath(metaRelative);
+            if (!File.Exists(metaPath))
+            {
+                this.AddProblem($"缺少 audio.json：{metaRelative}");
+                return;
+            }
+
+            string expectedHash = asset.GetString("hash");
+            if (!string.IsNullOrEmpty(expectedHash))
+            {
+                string actualHash = ExportNaming.Sha256File(metaPath);
+                if (!string.Equals(expectedHash, actualHash, StringComparison.Ordinal))
+                {
+                    this.AddProblem($"audio.json 内容与 manifest 记录的 hash 不一致：{metaRelative}");
+                }
+            }
+
+            JsonNode meta;
+            try
+            {
+                meta = JsonReader.Parse(File.ReadAllText(metaPath, Encoding.UTF8));
+            }
+            catch (Exception ex)
+            {
+                this.AddProblem($"audio.json 解析失败：{metaRelative}（{NodePathUtility.Describe(ex)}）");
+                return;
+            }
+
+            IReadOnlyList<JsonNode> entries = meta.GetArray("entries");
+            int? expectedFiles = asset.GetInt("files");
+            if (expectedFiles != null && expectedFiles.Value != entries.Count)
+            {
+                this.AddProblem($"音频文件数与 manifest 不一致：{metaRelative}（manifest {expectedFiles}，audio.json {entries.Count}）");
+            }
+
+            Interlocked.Increment(ref this.audioGroupCount);
+            string directory = Path.GetDirectoryName(metaPath);
+
+            for (int i = 0; i < entries.Count; i++)
+            {
+                JsonNode entry = entries[i];
+                Interlocked.Increment(ref this.audioFileCount);
+
+                int? index = entry.GetInt("index");
+                if (index != i)
+                {
+                    this.AddProblem($"音频序号不连续：{metaRelative}#{i}（index={index}）");
+                }
+
+                string fileName = entry.GetString("file");
+                if (string.IsNullOrEmpty(fileName))
+                {
+                    this.AddProblem($"音频条目缺少 file 字段：{metaRelative}#{i}");
+                    continue;
+                }
+
+                this.VerifyAudioFile(directory, metaRelative, fileName, entry);
+                this.CheckAudioRanges(entry, metaRelative + "/" + fileName);
+            }
+        }
+
+        private void VerifyAudioFile(string directory, string metaRelative, string fileName, JsonNode entry)
+        {
+            string path = Path.Combine(directory, fileName);
+            int? expectedBytes = entry.GetInt("bytes");
+            if (expectedBytes != null)
+            {
+                Interlocked.Add(ref this.audioBytes, expectedBytes.Value);
+            }
+
+            var info = new FileInfo(path);
+            if (!info.Exists)
+            {
+                this.AddProblem($"缺少音频文件：{metaRelative} -> {fileName}");
+                return;
+            }
+
+            if (expectedBytes != null && info.Length != expectedBytes.Value)
+            {
+                this.AddProblem($"音频文件大小与 audio.json 不一致：{metaRelative} -> {fileName}（{info.Length} != {expectedBytes}）");
+            }
+
+            string expectedSha = entry.GetString("sha256");
+            if (!string.IsNullOrEmpty(expectedSha))
+            {
+                string actualSha = ExportNaming.Sha256File(path);
+                if (!string.Equals(expectedSha, actualSha, StringComparison.Ordinal))
+                {
+                    this.AddProblem($"音频文件内容与 audio.json 的 sha256 不一致：{metaRelative} -> {fileName}");
+                }
+            }
+
+            string format = entry.GetString("format");
+            string problem = AudioSignatures.CheckFormat(format, File.ReadAllBytes(path));
+            if (problem != null)
+            {
+                this.AddProblem($"音频格式不可识别：{metaRelative} -> {fileName}（{problem}）");
+            }
+        }
+
+        private void CheckAudioRanges(JsonNode entry, string label)
+        {
+            string format = entry.GetString("format");
+            var problems = new List<string>();
+            var stub = new AudioEntry
+            {
+                Format = format,
+                Channels = entry.GetInt("channels"),
+                SampleRate = entry.GetInt("sampleRate"),
+                Duration = entry.GetInt("duration") ?? 0,
+                Bytes = entry.GetInt("bytes") ?? 0,
+                Sha256 = entry.GetString("sha256"),
+            };
+            ExportVerifier.CheckAudioRanges(stub, label, problems);
+            foreach (string problem in problems)
+            {
+                this.AddProblem(problem);
+            }
         }
 
         private void VerifyAsset(JsonNode asset)
@@ -249,12 +436,18 @@ namespace WzComparerR2.Export
         {
             if (this.problems.Count == 0)
             {
-                this.logger.Info(string.Format(
-                    "校验通过：{0} 组 / {1} 帧，PNG 头检查 {1} 张{2}，耗时 {3:0.0}s。",
-                    this.groupCount,
-                    this.frameCount,
-                    this.deep ? $"，GDI+ 深度重开 {this.deepChecked} 张" : string.Empty,
-                    elapsed.TotalSeconds));
+                var parts = new List<string>();
+                if (this.groupCount > 0 || this.audioGroupCount == 0)
+                {
+                    parts.Add($"{this.groupCount} 组 / {this.frameCount} 帧，PNG 头检查 {this.frameCount} 张" +
+                        (this.deep ? $"，GDI+ 深度重开 {this.deepChecked} 张" : string.Empty));
+                }
+                if (this.audioGroupCount > 0)
+                {
+                    parts.Add($"音频 {this.audioGroupCount} 组 / {this.audioFileCount} 个（内容 SHA-256 与签名已核对）");
+                }
+
+                this.logger.Info($"校验通过：{string.Join("；", parts)}，耗时 {elapsed.TotalSeconds:0.0}s。");
                 return 0;
             }
 

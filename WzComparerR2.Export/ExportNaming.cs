@@ -147,6 +147,16 @@ namespace WzComparerR2.Export
             }
         }
 
+        /// <summary>字节内容的 SHA-256（音频文件用，类型见 spec §9.3 的 entries[].sha256）。</summary>
+        public static string Sha256Bytes(byte[] data)
+        {
+            using (var sha = SHA256.Create())
+            {
+                byte[] bytes = sha.ComputeHash(data);
+                return ToHex(bytes, bytes.Length);
+            }
+        }
+
         public static string Sha256File(string path)
         {
             using (var sha = SHA256.Create())

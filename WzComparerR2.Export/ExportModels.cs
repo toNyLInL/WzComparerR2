@@ -96,6 +96,71 @@ namespace WzComparerR2.Export
         public int Version { get; set; }
     }
 
+    /// <summary>audio.json 里的一条音频。字段说明见 docs/plan/spec/wz-export-schema.md §9.3。</summary>
+    internal sealed class AudioEntry
+    {
+        public int Index { get; set; }
+
+        /// <summary>wz 节点原名（保留原文，便于反查）。</summary>
+        public string Name { get; set; }
+
+        /// <summary>同目录下的音频文件名（含扩展名）。</summary>
+        public string File { get; set; }
+
+        /// <summary>mp3 / wav / bin / unknown，下游据此决定 decoder。</summary>
+        public string Format { get; set; }
+
+        /// <summary>wz 媒体类型自带的名字，识别不出时为空。</summary>
+        public string Codec { get; set; }
+
+        public int? Channels { get; set; }
+
+        public int? SampleRate { get; set; }
+
+        public int? BitsPerSample { get; set; }
+
+        public int? BlockAlign { get; set; }
+
+        /// <summary>毫秒；wz 没记时按码流估算，仍为 0 表示未知。</summary>
+        public int Duration { get; set; }
+
+        public int Bytes { get; set; }
+
+        /// <summary>落盘文件内容的 SHA-256（verify --out 逐字节核对用）。</summary>
+        public string Sha256 { get; set; }
+
+        public string Source { get; set; }
+
+        public string Uol { get; set; }
+
+        public string Link { get; set; }
+
+        public bool Inlink { get; set; }
+
+        public string LinkError { get; set; }
+    }
+
+    /// <summary>一个音频分组（同属一个父节点的一组音频，落到一个目录 + audio.json）。</summary>
+    internal sealed class AudioGroup
+    {
+        public AudioGroup()
+        {
+            this.Entries = new List<AudioEntry>();
+        }
+
+        public string Kind { get; set; }
+
+        public string Source { get; set; }
+
+        public string RelativeDir { get; set; }
+
+        public List<AudioEntry> Entries { get; }
+
+        public int Bytes { get; set; }
+
+        public string MetaRelativePath { get; set; }
+    }
+
     internal sealed class ManifestAsset
     {
         public string Source { get; set; }
@@ -114,12 +179,32 @@ namespace WzComparerR2.Export
         public string Hash { get; set; }
     }
 
+    /// <summary>manifest 里登记的一条音频分组资产。</summary>
+    internal sealed class ManifestAudio
+    {
+        public string Source { get; set; }
+
+        public string Dir { get; set; }
+
+        public string Meta { get; set; }
+
+        /// <summary>该分组落盘的音频文件数。</summary>
+        public int Files { get; set; }
+
+        /// <summary>该分组音频原始字节总数。</summary>
+        public int Bytes { get; set; }
+
+        /// <summary>audio.json 内容的 sha256。</summary>
+        public string Hash { get; set; }
+    }
+
     internal sealed class ExportManifest
     {
         public ExportManifest()
         {
             this.Files = new List<WzFileInfo>();
             this.Assets = new List<ManifestAsset>();
+            this.Audio = new List<ManifestAudio>();
             this.Warnings = new List<string>();
         }
 
@@ -146,8 +231,22 @@ namespace WzComparerR2.Export
 
         public int PngFiles { get; set; }
 
+        /// <summary>纯音频清单：本份 manifest 只登记 audio[]，图片分类另存于 &lt;out&gt;/audio/manifest.json 之外的那份。</summary>
+        public bool AudioOnly { get; set; }
+
+        public int AudioGroups { get; set; }
+
+        public int AudioFiles { get; set; }
+
+        public int AudioBytes { get; set; }
+
         public List<ManifestAsset> Assets { get; }
 
+        public List<ManifestAudio> Audio { get; }
+
         public List<string> Warnings { get; }
+
+        /// <summary>是否登记了任何音频条目（决定 counts 里要不要写 audio* 字段）。</summary>
+        public bool HasAudio => this.AudioOnly || this.Audio.Count > 0;
     }
 }

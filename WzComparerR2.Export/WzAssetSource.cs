@@ -227,6 +227,24 @@ namespace WzComparerR2.Export
         /// </summary>
         public Wz_Node ResolveCanvasNode(Wz_Node node, WzCanvasLink link)
         {
+            return this.ResolveLinkedValueNode(node, link, value => value is Wz_Png);
+        }
+
+        /// <summary>
+        /// 把音频节点解析到真正持有 <see cref="Wz_Sound"/> 的节点：规则与 <see cref="ResolveCanvasNode"/>
+        /// 同一套（先 Wz_Uol 链、再 source/_inlink/_outlink），解析失败退回原节点并记录原因。
+        /// </summary>
+        public Wz_Node ResolveSoundNode(Wz_Node node, WzCanvasLink link)
+        {
+            return this.ResolveLinkedValueNode(node, link, value => value is Wz_Sound);
+        }
+
+        /// <summary>
+        /// 通用的「沿 UOL/链接走到值节点」实现。参数 <paramref name="isTarget"/> 用来判定目标值类型
+        /// （canvas 或 sound），这样链接解析逻辑只有一份。
+        /// </summary>
+        private Wz_Node ResolveLinkedValueNode(Wz_Node node, WzCanvasLink link, Func<object, bool> isTarget)
+        {
             if (node == null)
             {
                 return null;
@@ -278,7 +296,41 @@ namespace WzComparerR2.Export
             }
 
             Wz_Node resolved = target.ResolveUol();
-            return resolved ?? target;
+            if (resolved == null)
+            {
+                return target;
+            }
+            return resolved;
+        }
+
+        /// <summary>
+        /// 绝对路径 UOL 的首段是不是一个已加载的 wz 名。v271 的 `/Item/Cash/0515.img/...` 这类写法常省略
+        /// 文件名的 `.wz`，判断失败说明对应分组没传进来，而不是链接本身坏了。
+        /// </summary>
+        public bool IsKnownFileSegment(string segment)
+        {
+            if (string.IsNullOrEmpty(segment))
+            {
+                return false;
+            }
+
+            foreach (Wz_Node root in this.roots)
+            {
+                if (this.MatchesFileSegment(root, segment))
+                {
+                    return true;
+                }
+            }
+
+            foreach (Wz_File wzFile in this.structure.wz_files)
+            {
+                Wz_Node root = wzFile.Node;
+                if (root != null && this.MatchesFileSegment(root, segment))
+                {
+                    return true;
+                }
+            }
+            return false;
         }
 
         /// <summary>
@@ -297,7 +349,64 @@ namespace WzComparerR2.Export
                 }
             }
 
-            return uol.HandleUol(current);
+            Wz_Node resolved = uol.HandleUol(current);
+            if (resolved != null)
+            {
+                return resolved;
+            }
+
+            // 回退：v271 的 Sound.wz/Mob.img 里存在 `9001003/Skill1`、`../../3000000/Die` 这类写法——
+            // 目标其实是该 img 根的直接子节点，但 WzLib 的 HandleUol 以「父节点」为起点且 `..` 不允许越过 img 根，
+            // 于是全部解析失败（实测 Mob.img 有上千条）。这里只在解析失败时补一层「以 img 内容根为起点、
+            // `..` 到根即停」的容错，不改 WzLib 的行为（主程序 QuickView 仍走原语义）。
+            return ResolveUolFromImageRoot(current, path);
+        }
+
+        /// <summary>
+        /// 以当前节点所属 img 的内容根为起点解析 UOL：普通段向下找，`..` 向上走但到根即停（clamp）。
+        /// 找不到返回 null。
+        /// </summary>
+        private static Wz_Node ResolveUolFromImageRoot(Wz_Node current, string path)
+        {
+            if (string.IsNullOrEmpty(path) || path[0] == '/')
+            {
+                return null;
+            }
+
+            Wz_Node root = NodePathUtility.GetOwnerImage(current)?.Node;
+            if (root == null)
+            {
+                return null;
+            }
+
+            Wz_Node node = root;
+            foreach (string segment in NodePathUtility.Split(path))
+            {
+                if (segment == ".")
+                {
+                    continue;
+                }
+
+                if (segment == "..")
+                {
+                    // 到 img 根就停：客户端的数据里 `../..` 有时比实际层级多一层。
+                    // 这里故意用 ParentNode（img 内容根的 ParentNode 为 null），不能用 GetParentOrOwner，
+                    // 否则会越过 img 边界跑到树节点上，`../8620009/...` 这类写法就永远找不到。
+                    if (!ReferenceEquals(node, root) && node.ParentNode != null)
+                    {
+                        node = node.ParentNode;
+                    }
+                    continue;
+                }
+
+                Wz_Node child = node.FindNodeByPath(segment);
+                if (child == null)
+                {
+                    return null;
+                }
+                node = child;
+            }
+            return node;
         }
 
         private Wz_Node ResolveLinkedNode(Wz_Node node, string linkPath)

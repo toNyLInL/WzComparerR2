@@ -33,7 +33,11 @@ namespace WzComparerR2.Export
         private int pngFileCount;
         private int longDelayFrameCount;
 
-        public UiImageExporter(WzAssetSource source, ExportOptions options, ExportLogger logger)
+        /// <summary>导出范围里出现的 &lt;Wz_Sound&gt; 节点个数，只用来提示「音频要改用 audio 命令」。</summary>
+        private int wantedAudio;
+
+        public UiImageExporter(WzAssetSource source, ExportOptions options, ExportLogger logger,
+            HashSet<string> sharedDirectories = null)
         {
             this.source = source;
             this.options = options;
@@ -41,7 +45,7 @@ namespace WzComparerR2.Export
             this.contentRoot = string.IsNullOrEmpty(options.OutputDirectory)
                 ? null
                 : Path.Combine(options.OutputDirectory, "sprite", options.Kind);
-            this.usedDirectories = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            this.usedDirectories = sharedDirectories ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             this.assets = new List<ManifestAsset>();
             this.groups = new List<MetaGroup>();
             this.targetPaths = new List<string>();
@@ -118,6 +122,14 @@ namespace WzComparerR2.Export
             {
                 // 客户端常用 600000ms 这类超长 delay 表示"定格"，不是异常，汇总提示一次。
                 this.logger.Warn($"有 {this.longDelayFrameCount} 帧 delay > 60000ms（客户端用于定格，属正常数据）");
+            }
+
+            if (this.wantedAudio > 0 && !this.dryRun)
+            {
+                // 音频不属图片分类：这里只提示，不落盘（产物目录与元数据都不同，见 spec §9）。
+                // list 模式下音频会单独统计一遍，不用再提示「已跳过」。
+                this.logger.Warn($"导出范围里有 {this.wantedAudio} 处音频（Sound_DX8），当前是图片导出，已跳过；" +
+                    "要导出音频请用 `wzexport audio … --out <目录>`");
             }
 
             return manifest;
@@ -201,6 +213,13 @@ namespace WzComparerR2.Export
 
                 var link = new WzCanvasLink();
                 Wz_Node canvasNode = this.source.ResolveCanvasNode(child, link);
+
+                if (canvasNode?.Value is Wz_Sound)
+                {
+                    // 音频不是 canvas，不算帧；计数后在 manifest warnings 里提示改用 audio 命令。
+                    this.wantedAudio++;
+                    continue;
+                }
 
                 if (canvasNode?.Value is Wz_Png)
                 {

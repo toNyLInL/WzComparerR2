@@ -22,15 +22,18 @@ WZ → 引擎无关中间格式（PNG + JSON）的**离线**导出器，产物�
 | `NodePathUtility.cs` | 节点符号路径（跨 img 边界）、链接属性读取 |
 | `ExportTargetList.cs` | `--list` 批量清单解析（`->` 子目录）与 `--skip` 通配符匹配 |
 | `UiImageExporter.cs` | 分组规则、帧元数据读取、PNG 落盘、meta/manifest 组装 |
+| `AudioExporter.cs` | 音频分组（同一条规则）、`Wz_Sound` 取样、文件名分配、audio.json/manifest 组装 |
+| `AudioCodec.cs` | 音频格式判定（`AM_MEDIA_TYPE` + 码流探测）、WAV 头拼接、落盘签名识别 |
 | `ExportNaming.cs` | 文件名清洗、Windows 保留名、路径长度保护、SHA-256 工具 |
 | `PngSaver.cs` | canvas → RGBA32 → PNG 字节；读回尺寸 |
 | `JsonTextWriter.cs` / `JsonExportWriter.cs` | 手写 JSON（2 空格缩进、`\n`、UTF-8 无 BOM），保证字节稳定 |
 | `WzTreeLister.cs` | `list --depth <n>` 的节点树打印（只读，用来在大 wz 上先看结构） |
-| `ExportVerifier.cs` | `--verify` 的断言与目录比对 |
-| `ExistingOutputVerifier.cs` | `verify --out` 命令：只校验已导出产物（manifest/meta/PNG 头/区间），按资产并行 |
-| `JsonReader.cs` | 极简 JSON 读取（只服务自己的 manifest/meta） |
+| `ExportVerifier.cs` | `--verify` 的断言与目录比对（图片 + 音频） |
+| `ExistingOutputVerifier.cs` | `verify --out` 命令：只校验已导出产物（manifest/meta/PNG 头/audio 签名/区间），按资产并行 |
+| `JsonReader.cs` | 极简 JSON 读取（只服务自己的 manifest/meta/audio.json） |
 | `PngHeader.cs` | 读 PNG 签名 + IHDR 尺寸，不经过 GDI+（大包校验用） |
-| `verify/verify-ui-export.ps1` | 无 wz 样本的端到端回归：合成 `.img` 夹具 + 断言 |
+| `verify/verify-ui-export.ps1` | 无 wz 样本的端到端回归：合成 `.img` 夹具 + 断言（图片） |
+| `verify/verify-audio-export.ps1` | 同上，音频：合成 `Sound_DX8` 夹具（mp3/pcm/bin/`_inlink`/UOL/非法名） |
 
 ## 3. 硬性规则
 
@@ -57,14 +60,21 @@ WZ → 引擎无关中间格式（PNG + JSON）的**离线**导出器，产物�
 ```powershell
 dotnet build .\WzComparerR2.Export\WzComparerR2.Export.csproj -c Debug
 powershell -NoProfile -ExecutionPolicy Bypass -File .\WzComparerR2.Export\verify\verify-ui-export.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\WzComparerR2.Export\verify\verify-audio-export.ps1
 ```
 
 - 第一条必须 **0 error 且 0 warning**（新工程没有历史警告）。
-- 第二条在没有 wz 样本时是唯一可自动化的端到端验证；改了分组/链接/命名/JSON 就必须跑它。
-- 有真实客户端时补一条人工路径：`wzexport list --wz UI.wz --node "UIWindow.img"` 的帧数要与 QuickView 一致。
+- 后两条在没有 wz 样本时是唯一可自动化的端到端验证；改了分组/链接/命名/JSON 就必须跑。
+  本机若没有 .NET 8 运行时，跑回归前先 `$env:DOTNET_ROLL_FORWARD='Major'`。
+- 有真实客户端时补一条人工路径：`wzexport list --wz UI.wz --node "UIWindow.img"` 的帧数要与 QuickView 一致；
+  音频对照 `wzexport list --wz <Data\Sound>` 的 `音频统计` 与主程序 QuickView 的声音面板。
 - 大包交付前用 `wzexport verify --out <目录>` 复检（不读 wz、并行读盘）；需要查「图片能不能解」时加 `--deep`。
+  音频会额外核对内容 SHA-256 与容器签名。
 - 真实 v271 客户端的 `_Canvas` 是伴生子 wz：整包导出 UI 时用 `--skip _Canvas,WZ2Lua` 避免同一张图在
   「引用处 + 伴生处」各写一遍；需要多张图时优先用 `--list` 批量清单定点导出。
+- 导出 `Sound` 时把 `Data\Sound`（文件夹）作为**第一个** `--wz`：它有 66 个分卷，直接传单个
+  `Sound_0xx.wz` 会找不到 `--node`；同时传多个分组文件夹时，重名 img（`String` 与 `Sound` 都有 `UI.img`）
+  会落到先加载的那个。
 
 ## 6. 别做
 
