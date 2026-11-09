@@ -2,7 +2,7 @@
 
 | 项 | 值 |
 | --- | --- |
-| 状态 | **进行中**：M1 已定稿，M2 的 UI canvas 部分已落地，见 §11 |
+| 状态 | **进行中**：M1 已定稿，M2 的 UI canvas 部分与 M3 的音频部分已落地，见 §11 |
 | 创建日期 | 2026-10-21 |
 | 分支 | `chore/submodule-repoint` |
 | 来源 | 本次会话：资源查看器导出能力调研 + Debug 构建基线 + Unity adapter 方案设计 |
@@ -168,8 +168,10 @@ wz-export/
 
 ### M3｜动画 + 音频（规模 M）
 
-- 帧序列 + `frames[]`（page/origin/z/delay/a0/a1）；音频用 `Wz_Sound.ExtractSound()`（**已会补 WAV 头**，[Wz_Sound.cs:126](../../WzComparerR2.WzLib/Wz_Sound.cs#L126)），MP3 原样落 `.mp3` 或转 OGG。
-- 验收：帧数 = 节点数；`0 → 120ms` 默认值已固化；WAV 能被 `ffprobe`/播放器识别。
+- **状态：音频部分已完成（2026-11-05）**，见 §11；未做：帧序列的独立命令（`frames[]` 已在 canvas 导出里落地）。
+- 帧序列 + `frames[]`（page/origin/z/delay/a0/a1）；音频用 `Wz_Sound` 原始字节 + 自判容器
+  （**不用** `ExtractSound()`，理由见 §11），MP3 原样落 `.mp3`、PCM 补 RIFF 头落 `.wav`、其余 `.bin`。
+- 验收：帧数 = 节点数；`0 → 120ms` 默认值已固化；音频能被播放器/`verify --out` 的签名检查识别。
 
 ### M4｜Unity adapter（规模 M，代码在 Unity 工程侧）
 
@@ -211,9 +213,11 @@ wz-export/
 
 本仓库没有测试工程、CI 只构建不运行，所以每个里程碑自带：
 
-1. **断言脚本**（导出器内 `--verify` 模式）：尺寸 = `canvas.width/height`、帧数 = 节点数、`z ∈ [-9999, 9999]`、`delay > 0`（实测客户端有 `600000` 的长定格，不设上界）。
-2. **字节稳定**：固定 PNG 编码参数，同输入二次导出 diff 为空。
-3. **人工抽样**：每类资产抽 1~3 个，与 QuickView/MapRender 截图比对（附截图进 PR/计划更新）。
+1. **断言脚本**（导出器内 `--verify` 模式 + `verify --out` 只读复检）：
+   尺寸 = `canvas.width/height`、帧数 = 节点数、`z ∈ [-9999, 9999]`、`delay > 0`（实测客户端有 `600000`
+   的长定格，不设上界）；音频 `bytes`/`sha256`/容器签名/`duration > 0`。
+2. **字节稳定**：固定 PNG 编码参数、固定音频容器字节，同输入二次导出 diff 为空。
+3. **人工抽样**：每类资产抽 1~3 个，与 QuickView/MapRender 截图（音频为播放器）比对。
 4. **构建门槛**：仍以根 `AGENTS.md` §8 为准（`net8.0-windows` 主程序构建通过且不新增警告）。
 
 ---
@@ -240,6 +244,36 @@ wz-export/
 ---
 
 ## 11. 进展（按时间倒序）
+
+### 2026-11-05：M3 音频导出落地（`wzexport audio`）
+
+| 事项 | 结果 |
+| --- | --- |
+| 命令 | `wzexport audio --wz <路径> [--wz …] [--node <节点>] --out <目录> [--list <文件>] [--skip <模式>] [--max-audio-bytes <n>] [--force] [--verify]`；`--kind` 默认 `sound` |
+| 产物 | `<out>/audio/sound/<相对路径>/<音频>.<mp3\|wav\|bin>` + `audio.json` + `<out>/manifest.json`（`audioOnly: true`，`audio[]`/`counts.audio*`） |
+| 分组 | 与图片同一套规则（一个节点的直接 `<Wz_Sound>` 子节点 = 同组音频）；`--node` 指向单个音频时目录取父节点路径 |
+| 格式判定 | 不看 `Wz_Sound.SoundType`（只认 `MEDIATYPE_Stream`，v271 大量 MP3 是 `MEDIATYPE_Audio` 会被判 Unknown 且 `ExtractSound()` 返回 null），改为「`AM_MEDIA_TYPE` 的 WAVEFORMATEX/子类型 + 码流探测」：MP3 原样落 `.mp3`，PCM 补 44 字节 RIFF 头落 `.wav`，其余 `.bin` |
+| 校验 | `--verify`：二次导出逐字节一致 + 每个文件签名可识别（WAV 的 `fmt ` 块自洽 / MP3 首帧同步字）+ `bytes`/`duration` 断言；`verify --out`：`audio.json` 的 SHA-256 与 manifest 一致、**文件内容 SHA-256** 与记录一致、签名可识别、计数一致 |
+| 回归 | 新增 `verify/verify-audio-export.ps1`：按 `Wz_Image.ExtractImg` 的 `Sound_DX8` 布局合成夹具（MPEG1Audio 裸 MP3、WAVE 子类型裸 PCM、MIDI、`_inlink`、UOL、非法文件名、跨目录同内容），22 组断言全绿；既有图片回归仍全绿 |
+| 实测 | 真实 v271 客户端（`Data\Sound`，66 个分卷）：`Jukebox.img` 2 组/2 个、`UI.img` 1 组/180 个、`Mob.img` **9079 组 / 35139 个 / 641MB**，`--verify` 全部逐字节一致；`verify --out` 分钟级复检通过，改一个字节即报 sha256 不一致（退出码 3） |
+
+实测中的两个发现（都已回写到实现与 spec）：
+
+1. **`Wz_Uol.HandleUol` 解不了 `Mob.img` 里的一批相对 UOL**：`../8620009/Attack1`、`9001003/Skill1`、
+   `../../3000000/Die` 这类写法，目标其实是该 img 根的直接子节点，但 `HandleUol` 以「父节点」为起点、
+   且 `..` 不允许越过 img 根，于是全部失败（`Mob.img` 首次导出有上千条、少导 8 个音频）。
+   导出器侧加了 `WzAssetSource.ResolveUolFromImageRoot`：**仅在 `HandleUol` 返回 null 时**以 img 内容根为起点、
+   `..` 到根即停再试一次。**没有改 WzLib**，主程序 QuickView 仍走原语义。修完后 `Mob.img` 只剩 43 条
+   **真死链**（如 `8620009` 目录存在但没有 `Hit1`），按「警告 + 跳过」处理。
+2. **`Wz_Sound.ExtractSound()` 不够用**：对 `MEDIATYPE_Audio` 的 MP3 与 `Binary` 型都返回 `null`；
+   导出器统一用 `CopyTo(buffer)` 取原始字节后自己判定容器。这是 spec §9.4 的核心结论。
+
+给 Unity 侧的接法：`audio/` 下每个目录一份 `audio.json`，按 `entries[].format` 选解码器
+（`mp3` 直接给 `AudioClip`/AudioToolkit，`wav` 是标准 RIFF 容器），`bytes`/`sha256` 可做增量与去重键，
+`duration` 取自 wz 自带值（毫秒），`uol`/`link` 记录复用关系。
+
+仍未做：MP3 → OGG 转码（要引编解码器，与「只依赖 WzLib + BCL」冲突）、WZ2 版 `<Wz_Audio>` 解析、
+`SoundSubtitle.img` 的字幕元数据。
 
 ### 2026-10-23：`verify` 命令（只校验产物，不重导）
 
@@ -313,17 +347,26 @@ GDI+ 重开 + 784k 次 SHA-256）。新增只读校验模式：
 ```powershell
 dotnet build .\WzComparerR2.Export\WzComparerR2.Export.csproj -c Debug
 powershell -NoProfile -ExecutionPolicy Bypass -File .\WzComparerR2.Export\verify\verify-ui-export.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\WzComparerR2.Export\verify\verify-audio-export.ps1
 ```
+
+若没有 .NET 8 运行时，跑回归前先 `$env:DOTNET_ROLL_FORWARD='Major'`，
+否则 `wzexport.exe` 会以「You must install or update .NET」退出、脚本里所有导出断言都会空过。
 
 真实客户端手工验证（无 wz 样本时唯一的正确性来源）：
 
 ```powershell
 .\WzComparerR2.Export\bin\Debug\net8.0-windows\wzexport.exe list --wz "<客户端>\Data\UI.wz" --node "UIWindow.img"
 .\WzComparerR2.Export\bin\Debug\net8.0-windows\wzexport.exe ui --wz "<客户端>\Data\UI.wz" --node "UIWindow.img" --out D:\export\ui --verify
+
+# 音频：把分组文件夹（不是单个分卷）作为 --wz，66 个分卷才会一起挂上
+.\WzComparerR2.Export\bin\Debug\net8.0-windows\wzexport.exe audio --wz "<客户端>\Data\Sound" --node "Bgm00.img" --out D:\export\sound --verify
+.\WzComparerR2.Export\bin\Debug\net8.0-windows\wzexport.exe verify --out D:\export\sound
 ```
 
 期望：`list` 报告的帧数与主程序 QuickView 展开该目录看到的图片数一致；导出目录里每个 PNG 的尺寸与
-QuickView「SavePicture」保存出来的图一致；`--verify` 输出「校验通过」。
+QuickView「SavePicture」保存出来的图一致；音频目录里的 `.mp3` 能直接被播放器打开（QuickView 声音面板的
+「Save」存出来的是同一份字节），`--verify` 输出「校验通过」。
 
-尚未做（对应 M2 剩余项与 M3）：`--list <file>` 批量清单、同内容 canvas 的 hash 去重/引用计数、
-音频 `Wz_Sound`、条目化（`sprite/<wztype>/<id>` 的 id 级目录）。
+尚未做（对应 M2 剩余项与 M3 剩余项）：同内容 canvas 的 hash 去重/引用计数、条目化
+（`sprite/<wztype>/<id>` 的 id 级目录）、`frames[]` 的独立动画命令、MP3→OGG 转码。

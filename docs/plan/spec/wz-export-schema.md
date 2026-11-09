@@ -3,10 +3,10 @@
 | 项 | 值 |
 | --- | --- |
 | 状态 | **生效（schema 1）** |
-| 创建日期 | 2026-10-23 |
+| 创建日期 | 2026-10-23（音频章节 2026-11-05 增补） |
 | 适用计划 | [wz-to-unity-export.md](../wz-to-unity-export.md) |
 | 对应实现 | `WzComparerR2.Export/`（命令 `wzexport`） |
-| 覆盖范围 | **UI 类静态图片**（canvas → PNG + 元数据）。动画帧序列、音频、spine、地图、图集尚未实现 |
+| 覆盖范围 | **UI 类静态图片**（canvas → PNG + 元数据）与 **音频**（`<-Wz_Sound>` → 原始字节 + `audio.json`）。动画帧序列、spine、地图、图集尚未实现 |
 
 本文件是中间格式的**契约**：产物、字段、命名、排序、校验规则都以这里为准。
 改字段属于破坏性变更，必须把 `schema` 加 1 并同步改本文件。
@@ -29,15 +29,27 @@
 ```
 <out>/
 ├── manifest.json                     # 本次导出的总清单
-└── sprite/
-    └── <kind>/                       # kind 默认 ui，可用 --kind 改
-        └── <相对路径>/                # 分组目录，见 §3
-            ├── <帧名>.png
-            ├── ...
-            └── meta.json
+├── sprite/
+│   └── <kind>/                       # kind 默认 ui，可用 --kind 改
+│       └── <相对路径>/                # 分组目录，见 §3
+│           ├── <帧名>.png
+│           ├── ...
+│           └── meta.json
+└── audio/                            # 音频（`wzexport audio`，见 §9）
+    ├── manifest.json                 # 仅当 <out>/manifest.json 已被图片清单占用时才写（见下）
+    └── <kind>/                       # kind 默认 sound，可用 --kind 改
+        └── <相对路径>/                # 分组目录，见 §9.2
+            ├── <音频名>.mp3|.wav|.bin
+            └── audio.json
 ```
 
-- `<kind>` 同时决定 `sprite/<kind>/` 目录名与 manifest 的 `kind` 字段。
+- `--kind` 同时决定 `sprite/<kind>/`、`audio/<kind>/` 的目录名与 manifest 的 `kind` 字段；
+  图片（`ui`）默认 `ui`，音频（`audio`）默认 `sound`。**`ui` 命令只导图片、`audio` 命令只导音频**
+  （`ui` 遇到 `<Wz_Sound>` 只告警提示改用 `audio`），两种产物可以共用一个 `--out`。
+- 一份 manifest 只登记**一种分类**的资产：图片进 `assets[]`，音频进 `audio[]`（`audioOnly: true`，见 §5）。
+- `audio` 命令写清单时：`<out>/manifest.json` 不存在或本身就是音频清单 → 覆盖它；
+  已存在**图片**清单 → 改写到 `<out>/audio/manifest.json`，不会把图片那份盖掉。
+- `wzexport verify --out <目录>` 自动读 `<out>/manifest.json`，存在 `<out>/audio/manifest.json` 时一并校验。
 - `<相对路径>` 是分组节点在 wz 里的路径，**去掉 `.img` 后缀**，用 `/` 分隔，
   首段是 wz 文件名（不含扩展名）。例：`sprite/ui/UI/UIWindow/Main/backgrnd/`。
 - 单个 `.img` 文件直接导出时，开头不会重复出现同名层（`Fixture.img` → `sprite/ui/Fixture/...`）。
@@ -158,15 +170,45 @@
 }
 ```
 
+音频分类（`wzexport audio`，或同一次运行里同时导出了图片与音频）的 manifest 多一个
+`audioOnly` 标记，并用 `audio[]` 与 `counts.audioGroups/audioFiles/audioBytes` 代替 `assets[]` 与 `counts.pngFiles`：
+
+```json
+{
+  "schema": 1,
+  "tool": "wzexport",
+  "toolVersion": "2.2.12345",
+  "generatedAt": "2026-11-05T13:24:50Z",
+  "kind": "sound",
+  "audioOnly": true,
+  "root": "Sound.wz/UI.img",
+  "files": [ { "file": "Sound.wz", "version": 271 } ],
+  "counts": { "groups": 0, "frames": 0, "audioGroups": 1, "audioFiles": 3, "audioBytes": 4320 },
+  "audio": [
+    {
+      "source": "Sound.wz/UI.img",
+      "dir": "audio/sound/Sound/UI",
+      "meta": "audio/sound/Sound/UI/audio.json",
+      "files": 3,
+      "bytes": 4320,
+      "hash": "de3ee846…"
+    }
+  ],
+  "warnings": [ "…" ]
+}
+```
+
 | 字段 | 说明 |
 | --- | --- |
 | `toolVersion` | 取 `AssemblyInformationalVersion`（CI 写入 `2.2.<build>`），本地缺失时回落 `1.0.0.0` |
 | `generatedAt` | UTC，`yyyy-MM-ddTHH:mm:ssZ`。**唯一不参与字节比对的字段** |
 | `targets[]` | 本次导出覆盖的目标节点符号路径：单目标时只有一个元素（与 `root` 相同），`--list` 批量时按清单顺序列出 |
 | `files[]` | 参与解析的 wz 文件（第一个是导出根，其余用于跨文件链接） |
-| `counts` | 分组数 / 帧数 / 落盘 PNG 数（当前一帧一张，后两者相等） |
+| `counts` | 分组数 / 帧数 / 落盘 PNG 数（当前一帧一张，后两者相等）；音频分类另有 `audioGroups/audioFiles/audioBytes` |
 | `assets[].hash` | 该分组 `meta.json` 内容的 SHA-256（十六进制小写），用于增量与去重 |
 | `assets[].width/height` | 仅 `uniform=true` 时出现 |
+| `audioOnly` | 可选 bool。`true` 表示这份 manifest 是**纯音频**清单（`audio` 命令写的都是这种）；缺省即图片分类（`assets[]`） |
+| `audio[]` | 纯音频清单的资产列表，字段与 `assets[]` 平行：`source`/`dir`/`meta`/`files`（音频文件数）/`bytes`（原始字节总数）/`hash`（`audio.json` 的 SHA-256） |
 | `warnings[]` | 导出期间的非致命问题（节点跳过、链接/解码失败、目录重名），为空时省略该字段 |
 
 ---
@@ -179,6 +221,10 @@
   - `CON`/`PRN`/`AUX`/`NUL`/`COM1-9`/`LPT1-9` → 前置 `_`；
   - 单段超过 64 字符 → 前 24 字符 + `~` + 名字的 SHA-256 前 8 位。
 - 帧文件名：`<清洗后的帧名>.png`；多页 canvas 用 `<帧名>__p<page>.png`；同目录重名追加 `~2`、`~3`。
+- 音频文件名：`<清洗后的音频名>.<扩展名>`；扩展名见 §9.4。
+  - 同一段音频（内容 SHA-256 相同）在同一目录里只落一份，共用同一个文件名；
+  - 不同内容撞上同一个文件名时追加 `~2`、`~3` 并记一条警告（正常导出不会发生：同一父节点下的名字唯一，
+    只有 `--list` 用 `->` 把多个节点重定向到同一目录时才可能撞车）。
 - 目录段去掉 `.img` 后缀（`UIWindow.img` → `UIWindow`），但 `source` 保留完整名字。
 - 完整路径超过 240 字符时，自动缩短最深的段（同样的 `~hash` 规则）；仍超长则报错并提示换 `--out`。
 - 目录名大小写不敏感去重，避免 Windows 上互相覆盖。
@@ -189,12 +235,15 @@
 
 两种模式，任一断言失败都返回退出码 3：
 
-**A. 导出后立刻校验**：`wzexport ui … --verify`（读 wz，导出两遍）
+**A. 导出后立刻校验**：`wzexport ui|audio … --verify`（读 wz，导出两遍）
 
 1. **可重开**：每个 PNG 用 GDI+ 重新打开，尺寸必须等于 meta 里的 `width/height`；
-2. **一致性**：`frames[].index` 连续、帧数等于 manifest 计数、`meta.json` 的 SHA-256 等于 manifest 记录；
+   每个音频文件都能读出签名并找到 `fmt ` 块（WAV）或首帧同步字（MP3），见 §9.5；
+2. **一致性**：`frames[].index` 连续、帧数等于 manifest 计数、`meta.json` / `audio.json` 的 SHA-256 等于 manifest 记录、
+   音频文件大小与 `audio.json` 的 `bytes` 一致；
 3. **区间**：`z ∈ [-9999, 9999]`、`delay > 0`（不设上界：实测 v271 客户端最大 `600000`）、`a0/a1 ∈ [0, 255]`；
-4. **字节稳定**：同一输入再导出一份到 `<out>.verify`，逐文件比对（跳过 `manifest.json`），
+   音频 `channels ∈ [1, 32]`、`sampleRate ∈ [8000, 192000]`（`format=mp3` 时后端上报值，见 §9.4）、`duration > 0`；
+4. **字节稳定**：同一输入再导出一份到 `<out>.verify`，逐文件比对（跳过 `manifest.json` 与 `audio/manifest.json`），
    比对完删除临时目录。
 
 > 大规模产物的经验值：Image/Item 级（30 万帧 / 2.4GB）导出约 9 分钟，`--verify` 全流程约 60 分钟
@@ -202,17 +251,25 @@
 
 **B. 只校验已有产物**：`wzexport verify --out <目录> [--deep]`（**不读 wz、不重新导出**）
 
-- 依据 `manifest.json` 逐个资产核对：`meta.json` 存在且 SHA-256 与 manifest 记录一致、
-  帧数与 manifest 一致、`frames[].index` 连续；
+- 依据 `<out>/manifest.json`（以及存在时的 `<out>/audio/manifest.json`）逐个资产核对：
+  `meta.json`/`audio.json` 存在且 SHA-256 与 manifest 记录一致、帧数/文件数与 manifest 一致、`frames[].index` 连续；
 - 逐帧检查 PNG：读出签名与 IHDR 尺寸与 `meta.width/height` 比对，`z/delay/a0/a1` 在合法区间；
+- 每个音频文件：存在、大小等于 `audio.json.bytes`、**文件内容的 SHA-256 等于 `audio.json.sha256`**、
+  签名/`fmt ` 块/MP3 同步字可识别、`channels/sampleRate/duration/bytes` 在合法区间；
 - `--deep` 额外用 GDI+ 重新打开每张图（能查出「头部合法但内容损坏」，代价高）；
 - 默认按资产并行读盘（≤8 线程），30 万帧的包约数分钟；`--verify` 则要重导一遍、慢一个量级。
 - 用途：交付前的复检、拷贝/传输后的一致性抽查（不依赖 wz 与 WzLib）。
 
-不含 wz 样本的自动化回归见 `WzComparerR2.Export/verify/verify-ui-export.ps1`：
-它按 `Wz_Image.ExtractImg` 的二进制布局现场合成 `.img` 夹具，覆盖属性树、Canvas 子属性、
-Vector2D、UOL（含绝对路径）、`_inlink`、`_outlink`、非法文件名、`--force` 保护，
-以及 `verify` 的通过/损坏/缺失/参数互斥用例。
+不含 wz 样本的自动化回归：
+`WzComparerR2.Export/verify/verify-ui-export.ps1` 按 `Wz_Image.ExtractImg` 的二进制布局现场合成 `.img` 夹具，
+覆盖属性树、Canvas 子属性、Vector2D、UOL（含绝对路径）、`_inlink`、`_outlink`、非法文件名、`--force` 保护，
+以及 `verify` 的通过/损坏/缺失/参数互斥用例；
+`WzComparerR2.Export/verify/verify-audio-export.ps1` 合成 `Sound_DX8` 夹具（MPEG1Audio 裸 MP3 码流、
+WAVE 子类型的裸 PCM、MIDI、`_inlink`、UOL、非法文件名、跨目录同内容），覆盖 §9 的目录结构、`audio.json`
+字段、WAV 头修补、`--skip`、`--max-audio-bytes`、`--verify` 与 `verify --out` 的音频断言（含篡改/缺失/坏签名）。
+
+> 跑这两个脚本前如果本机没有 .NET 8 运行时，先设 `$env:DOTNET_ROLL_FORWARD='Major'`，
+> 否则 `wzexport.exe` 根本起不来，脚本里的导出断言会全部「空过」。
 
 ---
 
@@ -220,10 +277,133 @@ Vector2D、UOL（含绝对路径）、`_inlink`、`_outlink`、非法文件名�
 
 | 内容 | 归属 |
 | --- | --- |
-| 动画（帧序列 + `frames[]` 已有雏形）、音频 `Wz_Sound` | 计划 M3 |
+| 动画（帧序列 + `frames[]` 已有雏形） | 计划 M3 |
 | spine（skeleton/atlas）、视频 MCV0 转码 | 计划 M5 / M6 |
 | 图集（`atlas/` 合并图 + 映射表）、同内容 canvas 的 hash 去重与引用计数 | 计划 §4、§5.6 |
 | 地图分层几何、数据表（Gear 等模型 JSON） | 计划 M6 / M7 |
 | `String.wz` 本地化表 | 计划 §9 决策 5 之后 |
+| MP3 → OGG 转码（不内嵌编解码器）、WZ2 版 `<Wz_Audio>` 格式 | §9.6 |
 
 `schema` 只在**破坏性**变更时 +1；新增可选字段不升版本，但必须在本文件补一行说明。
+
+---
+
+## 9. 音频（`wzexport audio`）
+
+### 9.1 命令
+
+```powershell
+wzexport audio --wz <路径> [--wz …] [--node <节点>] --out <目录> [--list <文件>] [--skip <模式>] [--max-audio-bytes <n>] [--force] [--verify]
+```
+
+- `audio` 只导出音频；`ui` 只导出图片，**遇到 `<Wz_Sound>` 会告警提示改用 `audio`**
+  （两种产物的目录与元数据都不同，静默跳过容易出现「以为导出了其实没导」）。
+- `--node` 指向**单个音频节点**时，它独成一目录且用**父节点的相对路径**（与主程序 QuickView 的
+  `Save as <叶子名>.<ext>` 口径一致）；指向目录/img 时，该节点的**直接音频子节点**成为一组。
+- `--max-audio-bytes`：单条音频的数据上限（默认 64MB），超过只告警并跳过，防止一条异常数据把内存吃满。
+- 目录分配、`--skip` 通配、`--list` 批量清单、`--force` 保护、`--verify` 与图片模式完全共用（`sprite` → `audio`）。
+- 注意：v271 客户端里 `--wz` 传**多个分组文件夹**时，若前面的分组也含同名 img（例如 `String/` 与 `Sound/`
+  都有 `UI.img`），`--node "UI.img"` 会落到先加载的那个。导出 `Sound` 时把 `Sound` 放在第一个 `--wz`，
+  或用 `--node` 写全 `Sound.wz/UI.img`；`manifest.targets[0]` 会打印实际命中的位置。
+- 导 `Sound` 时直接传**分组文件夹**（`Data\Sound`），不要传单个 `Sound_0xx.wz`：66 个分卷要一起挂上，
+  `--node` 才找得到。
+
+### 9.2 分组（group）语义
+
+与图片模式同一套规则（§3），只是「帧」换成 `<-Wz_Sound>`：
+
+1. 一个节点的**直接子节点里，凡是能解析到 `<Wz_Sound>` 的，都是同一分组里的音频**，按 wz 节点顺序编号；
+2. `--node` 本身就是音频时，单独成组，目录即父节点路径（§9.1）；
+3. 元数据取自**音频自己**的子属性，缺失时回落到链接（`Wz_Uol`/`_inlink`/`_outlink`/`source`）目标；
+4. `--skip` 命中的节点既不成条目也不下钻；分组目录重名追加 `~2`、`~3`。
+5. `--list` 里若列出同一父节点下的多首单曲，它们**合并成一个分组**（进父节点目录、共用一份 `audio.json`），
+   不会各占一个 `~2`、`~3` 目录。
+
+### 9.3 `audio.json`（每个分组一份）
+
+```json
+{
+  "schema": 1,
+  "kind": "sound",
+  "source": "Sound.wz/UI.img",
+  "entries": [
+    {
+      "index": 0,
+      "name": "BtMouseClick",
+      "file": "BtMouseClick.wav",
+      "format": "pcm",
+      "codec": "WAVE_FORMAT_PCM/0x0001",
+      "channels": 1,
+      "sampleRate": 22050,
+      "bitsPerSample": 16,
+      "blockAlign": 2,
+      "duration": 177,
+      "bytes": 1892,
+      "sha256": "…",
+      "source": "Sound.wz/UI.img/BtMouseClick"
+    },
+    { "index": 1, "name": "-Inevitabilis", "file": "Inevitabilis.mp3", "format": "mp3", "bytes": 52000, "sha256": "…", "source": "Sound.wz/Bgm00.img/-Inevitabilis" }
+  ]
+}
+```
+
+| 字段 | 类型 | 说明 |
+| --- | --- |  --- |
+| `schema` / `kind` / `source` | | 同 `meta.json`（§4） |
+| `entries[]` | array | 音频条目，`index` 与数组下标一致 |
+| `entries[].name` | string | wz 节点原名，保留原文便于反查 |
+| `entries[].file` | string | 同目录下的音频文件名（含扩展名） |
+| `entries[].format` | string | `mp3` / `wav` / `bin` / `unknown`（见 §9.4）；下游按这个字段决定 decoder |
+| `entries[].codec` | string | wz 媒体类型自带的名字，如 `MPEG Layer-3`、`MPEG1AUDIO`、`WAVE_FORMAT_PCM/0x0001`；不识别时为空 |
+| `entries[].channels` / `sampleRate` / `bitsPerSample` / `blockAlign` | int | 取自 `WAVEFORMATEX`；读不到时省略 |
+| `entries[].duration` | int | 毫秒，取 wz 自己记录的时长；0 表示未知 |
+| `entries[].bytes` | int | 落盘文件的字节数 |
+| `entries[].sha256` | string | 落盘文件内容的 SHA-256，用于去重与 `verify --out` 逐字节核对 |
+| `entries[].source` | string | 音频节点的 wz 符号路径 |
+| `entries[].uol` / `link` / `inlink` / `linkError` | | 同 `meta.json` 的帧字段语义 |
+
+### 9.4 格式判定与落盘字节
+
+**判定只看 wz 的 `AM_MEDIA_TYPE`，不看 `SoundType`**：
+
+| 条件 | `format` | 容器 |
+| --- | --- | --- |
+| `MajorType = MEDIATYPE_Stream`、子类型是 `WF_FORMAT_PCM`/`ADPCM`/`IEEE_FLOAT`/`DTS`/`DRM` | `wav` | `fmt ` |
+| 同上，子类型是 `MPEG1Audio`（`MEDIASUBTYPE_MPEG1Audio`） | `mp3` | `mp3` |
+| 同上，子类型是 `WAVE` 且 `PbFormat` 是 `MPEGLAYER3WAVEFORMAT` | `mp3` | `mp3` |
+| 同上，子类型是 `MPEG1System`/`MPEG1Video`/`MPEG1VideoCD`/`ASF`/`AVI`/`AU`/`AIFF`/`MIDI`/`DTS` | `bin` | `bin` |
+| `MajorType = MEDIATYPE_Audio`（`WzLib` 当前不接受，导出时按码流探测） | `mp3` | `mp3` |
+| 其它 / 解析失败 | `unknown` | `bin` |
+
+**为什么不用 `Wz_Sound.SoundType` / `ExtractSound()`**：`SoundType` 只认 `Stream` 大类，
+`MajorType = MEDIATYPE_Audio` 的 MP3（实测 v271 `Sound.wz` 里绝大多数 mp3 都是这种）会被判成
+`Unknown`，`ExtractSound()` 返回 `null`；而且 `Binary` 型（`Ms == 1000 && Frequency == dataLength`）
+`ExtractSound()` 也返回 `null`。导出器一律直接用 `Wz_Sound.CopyTo(buffer)` 取原始字节，
+再按判定结果决定文件容器：
+
+- **`mp3`**：原始字节原样落盘，**不补头**（MP3 是裸码流，同步字 `0xFF Ex/Fx` 即文件起点）；
+- **`wav`**：在原始字节前拼 44 字节 RIFF 头（与 `Wz_Sound.ExtractSound()` 的 PCM 分支一致：
+  `RIFF`+`dataLength+36`+`WAVE`+`fmt `(16)+`WAVEFORMATEX`+`data`+`dataLength`）。写成独立文件后，
+  音频工具（ffprobe、播放器、`System.Media.SoundPlayer`）都能直接识别；
+- **`bin`**：原始字节原样落盘。
+
+> v271 实测（`Sound.wz` 全量）：mp3 条目的 `channels/sampleRate` 取后端上报值（采样率最常见是 `44100`，
+> 大量为 `16000` 的 `MPEGLAYER3WAVEFORMAT` 头同样是裸 MP3 字节流，`16000` 不是真实采样率）；客户端解析
+> **不依赖**这两个值，下游解码应以码流为准。
+
+### 9.5 校验（音频部分）
+
+- **导出后 `--verify`**：二次导出逐字节比对（跳过两份 manifest）；每个音频文件能被 `AudioSignatures.Read`
+  识别（WAV 需 `RIFF…WAVE` + `fmt ` 块且 `bitsPerSample/blockAlign/channels` 自洽；MP3 需首帧同步字
+  `0xFF Ex|Fx`；`bin` 只要求非空）；`duration > 0`（wz 记录值为 0 时按 `bytes/avgBytesPerSec` 估算后再断言）；
+  文件大小 = `audio.json.bytes`。
+- **`verify --out`**：`audio.json` 的 SHA-256 与 manifest 一致、每个文件存在且大小一致、**内容 SHA-256 与
+  `audio.json.sha256` 一致**（能查出拷贝损坏）、签名可识别。
+
+### 9.6 未做
+
+| 内容 | 说明 |
+| --- | --- |
+| MP3 → OGG 转码 | 需要引入编解码器（ffmpeg 或还原 LAME），与「导出器只依赖 WzLib + BCL」的边界冲突；当前原样给 mp3，引擎侧（Unity `AudioClip`、AudioToolkit）直接吃 |
+| WZ2 版 `<Wz_Audio>` | `WzLib` 只解析 `Sound_DX8`；新格式出现后先在 `Wz_Image` 加分支，再回填这里 |
+| `SoundSubtitle` 等元数据 | `Sound.wz/SoundSubtitle.img` 里的字幕数据目前按普通属性跳过 |
